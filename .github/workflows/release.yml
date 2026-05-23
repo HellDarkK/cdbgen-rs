@@ -22,19 +22,24 @@ jobs:
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Install musl toolchain
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
       - name: Build release binary
-        run: cargo build --release --locked
+        run: cargo build --release --locked --target x86_64-unknown-linux-musl
 
       - name: Prepare release artifact
         run: |
           set -euo pipefail
           mkdir -p dist
-          asset="cdbgen-rs-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu"
-          cp target/release/cdbgen-rs "dist/${asset}"
+          asset="cdbgen-rs-${GITHUB_REF_NAME}-x86_64-unknown-linux-musl"
+          cp target/x86_64-unknown-linux-musl/release/cdbgen-rs "dist/${asset}"
           chmod 0755 "dist/${asset}"
           sha256sum "dist/${asset}" > "dist/${asset}.sha256"
 

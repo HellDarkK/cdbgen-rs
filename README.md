@@ -2,6 +2,9 @@
 
 Generate DJB-compatible wire-format CDB databases from remote blocklists.
 
+Release binaries are built for `x86_64-unknown-linux-musl`, so they are
+statically linked and do not require a recent host glibc.
+
 ## Usage
 
 ```bash
