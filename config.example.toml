@@ -1,0 +1,28 @@
+# cdbgen-rs example configuration.
+#
+# Install path:
+#   /etc/cdbgen/config.toml
+#
+# Output directory:
+#   /var/lib/cdbgen
+#
+# Source IDs must match: ^[a-zA-Z0-9_-]+$
+
+[sources]
+
+# StevenBlack hosts-format blocklist.
+stevenblack = "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"
+
+# AdGuard DNS filter, AGH/Adblock-style syntax.
+adguard_dns = "https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt"
+
+# OISD small domain blocklist.
+oisd_small = "https://small.oisd.nl/"
+
+[outputs]
+
+# General-purpose DNS filtering database.
+"stevenblack, adguard_dns, oisd_small" = "/var/lib/cdbgen/general.cdb"
+
+# Minimal fallback database.
+"stevenblack" = "/var/lib/cdbgen/minimal.cdb"

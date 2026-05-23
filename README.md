@@ -23,6 +23,14 @@ Flags:
 
 ## Config
 
+Start from the bundled example:
+
+```bash
+sudo mkdir -p /etc/cdbgen /var/lib/cdbgen
+sudo cp config.example.toml /etc/cdbgen/config.toml
+sudo editor /etc/cdbgen/config.toml
+```
+
 ```toml
 [sources]
 "adblock-a" = "https://example.com/blocklist1"
@@ -35,6 +43,8 @@ Flags:
 
 Source IDs must match `^[a-zA-Z0-9_-]+$`. URLs must be `http://` or
 `https://`.
+
+The default config path is `/etc/cdbgen/config.toml`.
 
 ## Behavior
 
