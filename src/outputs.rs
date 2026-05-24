@@ -96,14 +96,16 @@ pub fn write_outputs(plans: &[OutputPlan]) -> Result<OutputWriteSummary, OutputE
             } => {
                 tracing::info!(
                     output = %output.path.display(),
+                    key_format = output.key_format.as_str(),
                     domains = domains.len(),
                     blocks_before_allow,
                     allows,
                     "writing output"
                 );
-                write_cdb_atomic(&output.path, domains)?;
+                write_cdb_atomic(&output.path, domains, output.key_format)?;
                 tracing::info!(
                     output = %output.path.display(),
+                    key_format = output.key_format.as_str(),
                     domains = domains.len(),
                     "atomic replacement complete"
                 );
@@ -115,6 +117,7 @@ pub fn write_outputs(plans: &[OutputPlan]) -> Result<OutputWriteSummary, OutputE
             } => {
                 tracing::warn!(
                     output = %output.path.display(),
+                    key_format = output.key_format.as_str(),
                     unavailable = ?unavailable_sources,
                     "skipping output due to unavailable sources"
                 );
@@ -122,6 +125,7 @@ pub fn write_outputs(plans: &[OutputPlan]) -> Result<OutputWriteSummary, OutputE
             OutputPlan::Empty { output } => {
                 tracing::error!(
                     output = %output.path.display(),
+                    key_format = output.key_format.as_str(),
                     "output would contain zero domains; preserving existing file"
                 );
                 summary.empty_outputs += 1;
@@ -143,6 +147,7 @@ mod tests {
             group: source_ids.join(", "),
             source_ids: source_ids.into_iter().map(ToOwned::to_owned).collect(),
             path: PathBuf::from("/tmp/out.cdb"),
+            key_format: crate::config::OutputKeyFormat::Wire,
         }
     }
 

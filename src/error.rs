@@ -56,6 +56,9 @@ pub enum ConfigError {
 
     #[error("output group {group:?} has empty output path")]
     EmptyOutputPath { group: String },
+
+    #[error("output group {group:?} must use either path or paths, not both")]
+    AmbiguousOutputPath { group: String },
 }
 
 #[derive(Debug, Error, Clone)]
@@ -77,6 +80,9 @@ pub enum OutputError {
 
     #[error("failed to write CDB record for {path}: {source}")]
     WriteRecord { path: PathBuf, source: io::Error },
+
+    #[error("failed to encode DNS wire-format key {domain:?} for {path}")]
+    InvalidWireKey { path: PathBuf, domain: String },
 
     #[error("failed to finalize CDB {path}: {source}")]
     Finalize { path: PathBuf, source: io::Error },

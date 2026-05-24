@@ -95,6 +95,7 @@ pub async fn run_with_cache(cli: Cli, cache: cache::Cache) -> Result<i32, AppErr
                     output, domains, ..
                 } => tracing::info!(
                     output = %output.path.display(),
+                    key_format = output.key_format.as_str(),
                     domains = domains.len(),
                     "dry-run would write output"
                 ),
@@ -103,11 +104,13 @@ pub async fn run_with_cache(cli: Cli, cache: cache::Cache) -> Result<i32, AppErr
                     unavailable_sources,
                 } => tracing::warn!(
                     output = %output.path.display(),
+                    key_format = output.key_format.as_str(),
                     unavailable = ?unavailable_sources,
                     "dry-run would skip output"
                 ),
                 OutputPlan::Empty { output } => tracing::error!(
                     output = %output.path.display(),
+                    key_format = output.key_format.as_str(),
                     "dry-run output would be empty"
                 ),
             }
@@ -203,8 +206,19 @@ mod tests {
         assert!(!bad_b.exists());
 
         let db = cdb::CDB::open(&good_a).unwrap();
-        assert_eq!(db.get(b"s0.example").unwrap().unwrap(), b"");
-        assert_eq!(db.get(b"s1.example").unwrap().unwrap(), b"");
+        assert_eq!(
+            db.get(&crate::cdb_writer::domain_to_wire("s0.example").unwrap())
+                .unwrap()
+                .unwrap(),
+            b""
+        );
+        assert_eq!(
+            db.get(&crate::cdb_writer::domain_to_wire("s1.example").unwrap())
+                .unwrap()
+                .unwrap(),
+            b""
+        );
+        assert!(db.get(b"s0.example").is_none());
     }
 
     fn config_for_partial_failure(

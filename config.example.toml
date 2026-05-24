@@ -39,3 +39,7 @@ rpz_example = "https://example.com/blocklists/rpz.txt"
     "/var/lib/cdbgen/combined.cdb",
     "/srv/www/blocklists/combined.cdb",
 ]
+
+# Outputs use DNS QNAME wire-format keys by default.
+# Use object syntax only if you need legacy plaintext keys:
+# adblock_example = { path = "/var/lib/cdbgen/plaintext.cdb", key_format = "plaintext" }

@@ -2,7 +2,8 @@
 
 `cdbgen-rs` builds DNS blocklist databases in DJB CDB format. It fetches the
 lists you name in a TOML config, parses the common DNS blocklist formats, then
-writes each configured output with an atomic replace.
+writes each configured output with an atomic replace. CDB keys are DNS QNAME
+wire-format bytes by default.
 
 The release build is a static Linux binary for `x86_64-unknown-linux-musl`.
 Release assets are uploaded as the binary itself plus a `.sha256` file. After
@@ -53,19 +54,33 @@ rpz_example = "https://example.com/blocklists/rpz.txt"
     "/var/lib/cdbgen/combined.cdb",
     "/srv/www/blocklists/combined.cdb",
 ]
+
+adblock_example = { path = "/var/lib/cdbgen/plaintext.cdb", key_format = "plaintext" }
 ```
 
 Source IDs must match `^[a-zA-Z0-9_-]+$`. Source URLs must use `http://` or
 `https://`.
 
 An output value can be one path string or an array of path strings. Arrays are
-the normal way to write the same database to more than one place.
+the normal way to write the same database to more than one place. These compact
+forms use `key_format = "wire"`.
 
 For compatibility, this string form also works:
 
 ```toml
 "hosts_example" = "'/var/lib/cdbgen/a.cdb', '/srv/www/blocklists/a.cdb'"
 ```
+
+Use object output values when you need to set the key format:
+
+```toml
+"hosts_example" = { path = "/var/lib/cdbgen/hosts.cdb", key_format = "wire" }
+"adblock_example" = { paths = ["/var/lib/cdbgen/a.cdb", "/srv/www/a.cdb"], key_format = "plaintext" }
+```
+
+`key_format = "wire"` stores DNS QNAME wire keys, e.g. `example.com` becomes
+`\x07example\x03com\x00`. `key_format = "plaintext"` stores legacy ASCII domain
+keys, e.g. `example.com`.
 
 ## What It Parses
 
@@ -89,6 +104,8 @@ For hosts/plain-domain input, field 0 auto behavior accepts `domain IP`,
 - Skips only outputs that depend on unavailable uncached sources, then exits
   with code `3`.
 - Writes sorted, deduplicated CDB keys with empty values.
+- Uses DNS QNAME wire-format keys by default; plaintext keys require
+  `key_format = "plaintext"`.
 - Writes through a same-directory temp file, fsync, atomic rename, and parent
   fsync.
 - Refuses to replace an output with an empty CDB.

@@ -20,6 +20,16 @@ struct RawConfig {
 enum RawOutputPaths {
     One(String),
     Many(Vec<String>),
+    Object(RawOutputObject),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawOutputObject {
+    path: Option<String>,
+    paths: Option<Vec<String>>,
+    #[serde(default)]
+    key_format: OutputKeyFormat,
 }
 
 #[derive(Debug, Clone)]
@@ -39,6 +49,24 @@ pub struct OutputConfig {
     pub group: String,
     pub source_ids: Vec<String>,
     pub path: PathBuf,
+    pub key_format: OutputKeyFormat,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputKeyFormat {
+    #[default]
+    Wire,
+    Plaintext,
+}
+
+impl OutputKeyFormat {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Wire => "wire",
+            Self::Plaintext => "plaintext",
+        }
+    }
 }
 
 impl Config {
@@ -108,7 +136,7 @@ impl Config {
                 }
             }
 
-            let paths = raw_paths.into_paths();
+            let (paths, key_format) = raw_paths.into_paths_and_format(&group)?;
             if paths.is_empty() {
                 return Err(ConfigError::EmptyOutputPath { group });
             }
@@ -124,6 +152,7 @@ impl Config {
                     group: group.clone(),
                     source_ids: source_ids.clone(),
                     path: PathBuf::from(path),
+                    key_format,
                 });
             }
         }
@@ -140,10 +169,33 @@ impl Config {
 }
 
 impl RawOutputPaths {
-    fn into_paths(self) -> Vec<String> {
+    fn into_paths_and_format(
+        self,
+        group: &str,
+    ) -> Result<(Vec<String>, OutputKeyFormat), ConfigError> {
         match self {
-            Self::One(path) => parse_quoted_path_list(&path).unwrap_or_else(|| vec![path]),
-            Self::Many(paths) => paths,
+            Self::One(path) => Ok((
+                parse_quoted_path_list(&path).unwrap_or_else(|| vec![path]),
+                OutputKeyFormat::Wire,
+            )),
+            Self::Many(paths) => Ok((paths, OutputKeyFormat::Wire)),
+            Self::Object(object) => {
+                let paths = match (object.path, object.paths) {
+                    (Some(path), None) => vec![path],
+                    (None, Some(paths)) => paths,
+                    (None, None) => {
+                        return Err(ConfigError::EmptyOutputPath {
+                            group: group.to_owned(),
+                        });
+                    }
+                    (Some(_), Some(_)) => {
+                        return Err(ConfigError::AmbiguousOutputPath {
+                            group: group.to_owned(),
+                        });
+                    }
+                };
+                Ok((paths, object.key_format))
+            }
         }
     }
 }
@@ -214,6 +266,7 @@ mod tests {
 
         assert_eq!(cfg.sources.len(), 2);
         assert_eq!(cfg.outputs[0].source_ids, vec!["adblock-a", "adblock_b"]);
+        assert_eq!(cfg.outputs[0].key_format, OutputKeyFormat::Wire);
         assert_eq!(cfg.selected_source_ids().len(), 2);
     }
 
@@ -235,6 +288,8 @@ mod tests {
         assert_eq!(cfg.outputs[1].path, PathBuf::from("/tmp/b.cdb"));
         assert_eq!(cfg.outputs[0].source_ids, vec!["a"]);
         assert_eq!(cfg.outputs[1].source_ids, vec!["a"]);
+        assert_eq!(cfg.outputs[0].key_format, OutputKeyFormat::Wire);
+        assert_eq!(cfg.outputs[1].key_format, OutputKeyFormat::Wire);
     }
 
     #[test]
@@ -253,6 +308,62 @@ mod tests {
         assert_eq!(cfg.outputs.len(), 2);
         assert_eq!(cfg.outputs[0].path, PathBuf::from("/tmp/a.cdb"));
         assert_eq!(cfg.outputs[1].path, PathBuf::from("/tmp/b.cdb"));
+        assert_eq!(cfg.outputs[0].key_format, OutputKeyFormat::Wire);
+        assert_eq!(cfg.outputs[1].key_format, OutputKeyFormat::Wire);
+    }
+
+    #[test]
+    fn parses_object_output_path_and_plaintext_key_format() {
+        let cfg = parse(
+            r#"
+            [sources]
+            a = "https://example.com/a"
+
+            [outputs]
+            a = { path = "/tmp/a.cdb", key_format = "plaintext" }
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(cfg.outputs.len(), 1);
+        assert_eq!(cfg.outputs[0].path, PathBuf::from("/tmp/a.cdb"));
+        assert_eq!(cfg.outputs[0].key_format, OutputKeyFormat::Plaintext);
+    }
+
+    #[test]
+    fn parses_object_output_paths_and_wire_key_format() {
+        let cfg = parse(
+            r#"
+            [sources]
+            a = "https://example.com/a"
+
+            [outputs]
+            a = { paths = ["/tmp/a.cdb", "/tmp/b.cdb"], key_format = "wire" }
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(cfg.outputs.len(), 2);
+        assert_eq!(cfg.outputs[0].path, PathBuf::from("/tmp/a.cdb"));
+        assert_eq!(cfg.outputs[1].path, PathBuf::from("/tmp/b.cdb"));
+        assert_eq!(cfg.outputs[0].key_format, OutputKeyFormat::Wire);
+        assert_eq!(cfg.outputs[1].key_format, OutputKeyFormat::Wire);
+    }
+
+    #[test]
+    fn rejects_invalid_key_format() {
+        let err = parse(
+            r#"
+            [sources]
+            a = "https://example.com/a"
+
+            [outputs]
+            a = { path = "/tmp/a.cdb", key_format = "raw" }
+            "#,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, ConfigError::Toml { .. }));
     }
 
     #[test]
@@ -361,5 +472,6 @@ mod tests {
                 .map(|source_id| (*source_id).to_string())
                 .collect::<Vec<_>>()
         );
+        assert_eq!(output.key_format, OutputKeyFormat::Wire);
     }
 }
