@@ -7,6 +7,13 @@
 #   /var/lib/cdbgen
 #
 # Source IDs must match: ^[a-zA-Z0-9_-]+$
+#
+# Source format is autodetected:
+#   hostfile - hosts/plain-domain list. Field 0 auto behavior accepts
+#              domain IP, IP domain, and bare domains.
+#   adblock  - Adblock/uBO-style exact-domain rules, with @@ exceptions.
+#   unbound  - Unbound local-zone/local-data format.
+#   rpz      - RPZ CNAME . format.
 
 [sources]
 

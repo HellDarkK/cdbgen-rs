@@ -127,6 +127,7 @@ fn log_parse_summary(parsed: &BTreeMap<String, ParsedSource>) {
         tracing::info!(
             source = %source,
             lines = parsed.stats.total_lines,
+            format = parsed.detected_format.as_str(),
             blocks = parsed.blocks.len(),
             allows = parsed.allows.len(),
             rejected = parsed.stats.rejected_lines,

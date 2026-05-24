@@ -54,8 +54,12 @@ The default config path is `/etc/cdbgen/config.toml`.
 - Uses `ETag` and `If-Modified-Since` cache validators.
 - Uses stale cache when fetch retries fail, unless `--force-refresh` is set.
 - Skips only outputs that depend on unavailable uncached sources, then exits `3`.
-- Parses plain domains, hosts-format rows, Unbound `local-zone`/`local-data`
-  rows, RPZ `CNAME`/`A`/`AAAA` rows, and exact-domain AGH/Adblock rules.
+- Autodetects fetched source type as `hostfile`, `adblock`, `unbound`, or
+  `rpz` for reporting.
+- Parses hostfile/plain-domain rows with field 0 auto behavior: `domain IP`,
+  `IP domain`, and bare domains are accepted.
+- Parses Unbound `local-zone`/`local-data` rows, RPZ `CNAME .` rows, and
+  exact-domain AGH/Adblock/uBO rules.
 - Treats exact `@@...` rules as allowlist removals.
 - Writes sorted, deduplicated CDB keys with empty values.
 - Writes via same-directory temp file, fsync, atomic rename, and parent fsync.
@@ -73,7 +77,7 @@ The default config path is `/etc/cdbgen/config.toml`.
 
 ## V1 Limits
 
-- Adblock extraction is exact-domain only; regex, wildcard, path, and
-  element-hiding rules are skipped.
+- Adblock/uBO extraction is exact-domain only; regex, wildcard, path, and
+  element-hiding/scriptlet rules are skipped.
 - Cache directory is fixed at `/var/cache/cdbgen-rs`.
 - YAML and named output selection are not implemented.

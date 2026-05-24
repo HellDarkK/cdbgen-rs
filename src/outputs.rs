@@ -148,6 +148,7 @@ mod tests {
 
     fn parsed(blocks: &[&str], allows: &[&str]) -> ParsedSource {
         ParsedSource {
+            detected_format: crate::parser::SourceFormat::Hostfile,
             blocks: blocks.iter().map(|value| (*value).to_string()).collect(),
             allows: allows.iter().map(|value| (*value).to_string()).collect(),
             stats: ParseStats::default(),
