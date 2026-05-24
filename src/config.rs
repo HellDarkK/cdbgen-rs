@@ -206,4 +206,45 @@ mod tests {
         .unwrap_err();
         assert!(matches!(err, ConfigError::UnsupportedScheme { .. }));
     }
+
+    #[test]
+    fn example_config_is_valid() {
+        let cfg = Config::from_toml_str(
+            include_str!("../config.example.toml"),
+            Path::new("config.example.toml"),
+        )
+        .unwrap();
+
+        assert_eq!(cfg.outputs.len(), 3);
+        assert_eq!(
+            cfg.sources.keys().cloned().collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                "alsyundawy_gambling".to_string(),
+                "bebasid_family".to_string(),
+                "bebasid_filtering".to_string(),
+                "hagezi_gambling".to_string(),
+                "holepl".to_string(),
+                "oisd".to_string(),
+                "oisd_nsfw".to_string(),
+                "onehosts".to_string(),
+                "stevenblack".to_string(),
+                "urlhaus".to_string(),
+            ])
+        );
+        assert!(
+            cfg.outputs
+                .iter()
+                .any(|output| output.path.ends_with("default.cdb"))
+        );
+        assert!(
+            cfg.outputs
+                .iter()
+                .any(|output| output.path.ends_with("family.cdb"))
+        );
+        assert!(
+            cfg.outputs
+                .iter()
+                .any(|output| output.path.ends_with("security.cdb"))
+        );
+    }
 }

@@ -115,6 +115,20 @@ struct ExtractedDomain {
 }
 
 fn extract_domains(line: &str) -> Vec<ExtractedDomain> {
+    if let Some(domain) = extract_unbound_line(line) {
+        return vec![ExtractedDomain {
+            kind: RuleKind::Block,
+            domain,
+        }];
+    }
+
+    if let Some(domain) = extract_rpz_line(line) {
+        return vec![ExtractedDomain {
+            kind: RuleKind::Block,
+            domain,
+        }];
+    }
+
     if let Some(domains) = extract_hosts_line(line) {
         return domains
             .into_iter()
@@ -135,6 +149,44 @@ fn extract_domains(line: &str) -> Vec<ExtractedDomain> {
         .into_iter()
         .map(|domain| ExtractedDomain { kind, domain })
         .collect()
+}
+
+fn extract_unbound_line(line: &str) -> Option<String> {
+    let trimmed = line.trim_start();
+    if let Some(rest) = trimmed.strip_prefix("local-zone:") {
+        return extract_first_quoted_value(rest).and_then(normalize_domain);
+    }
+    if let Some(rest) = trimmed.strip_prefix("local-data:") {
+        return extract_first_quoted_value(rest)
+            .and_then(|value| value.split_whitespace().next().and_then(normalize_domain));
+    }
+    None
+}
+
+fn extract_first_quoted_value(input: &str) -> Option<&str> {
+    let start = input.find('"')? + 1;
+    let rest = &input[start..];
+    let end = rest.find('"')?;
+    Some(rest[..end].trim())
+}
+
+fn extract_rpz_line(line: &str) -> Option<String> {
+    let tokens: Vec<&str> = line.split_whitespace().collect();
+    if tokens.len() < 2 || !is_rpz_record_type(tokens[1]) {
+        return None;
+    }
+
+    let owner = tokens[0].trim_end_matches('.');
+    let owner = owner.strip_prefix("*.").unwrap_or(owner);
+    if owner == "@" {
+        return None;
+    }
+
+    normalize_domain(owner)
+}
+
+fn is_rpz_record_type(value: &str) -> bool {
+    matches!(value.to_ascii_uppercase().as_str(), "CNAME" | "A" | "AAAA")
 }
 
 fn extract_hosts_line(line: &str) -> Option<Vec<String>> {
@@ -257,6 +309,27 @@ mod tests {
         assert!(!parsed.blocks.contains("path.example"));
         assert_eq!(parsed.stats.comment_lines, 1);
         assert!(parsed.stats.rejected_lines >= 3);
+    }
+
+    #[test]
+    fn parses_unbound_and_rpz_lines() {
+        let parsed = parse_source_bytes(
+            br#"
+            server:
+            local-zone: "ads.example.com." always_null
+            local-data: "tracker.example.net. A 0.0.0.0"
+            $TTL 3600
+            @ SOA localhost. root.localhost. 1 14400 3600 86400 3600
+            example.org CNAME .
+            *.wild.example.org CNAME .
+            "#,
+        );
+
+        assert!(parsed.blocks.contains("ads.example.com"));
+        assert!(parsed.blocks.contains("tracker.example.net"));
+        assert!(parsed.blocks.contains("example.org"));
+        assert!(parsed.blocks.contains("wild.example.org"));
+        assert!(!parsed.blocks.contains("localhost"));
     }
 
     #[test]

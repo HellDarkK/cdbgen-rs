@@ -54,7 +54,8 @@ The default config path is `/etc/cdbgen/config.toml`.
 - Uses `ETag` and `If-Modified-Since` cache validators.
 - Uses stale cache when fetch retries fail, unless `--force-refresh` is set.
 - Skips only outputs that depend on unavailable uncached sources, then exits `3`.
-- Parses plain domains, hosts-format rows, and exact-domain AGH/Adblock rules.
+- Parses plain domains, hosts-format rows, Unbound `local-zone`/`local-data`
+  rows, RPZ `CNAME`/`A`/`AAAA` rows, and exact-domain AGH/Adblock rules.
 - Treats exact `@@...` rules as allowlist removals.
 - Writes sorted, deduplicated CDB keys with empty values.
 - Writes via same-directory temp file, fsync, atomic rename, and parent fsync.

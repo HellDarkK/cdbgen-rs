@@ -10,19 +10,26 @@
 
 [sources]
 
-# StevenBlack hosts-format blocklist.
+# Shared sources.
+urlhaus = "https://urlhaus.abuse.ch/downloads/hostfile/"
+holepl = "https://hole.cert.pl/domains/v2/domains.txt"
+bebasid_filtering = "https://raw.githubusercontent.com/bebasid/bebasdns/main/dev/resources/hosts/custom-filtering-rules-blocklist"
 stevenblack = "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"
 
-# AdGuard DNS filter, AGH/Adblock-style syntax.
-adguard_dns = "https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt"
+# BebasDNS default profile.
+oisd = "https://big.oisd.nl/unbound"
+onehosts = "https://badmojr.github.io/1Hosts/Lite/unbound.conf"
 
-# OISD small domain blocklist.
-oisd_small = "https://small.oisd.nl/"
+# BebasDNS family profile.
+alsyundawy_gambling = "https://raw.githubusercontent.com/alsyundawy/TrustPositif/refs/heads/main/alsyundawy_gambling.txt"
+oisd_nsfw = "https://nsfw.oisd.nl/unbound"
+bebasid_family = "https://raw.githubusercontent.com/bebasid/bebasdns/refs/heads/main/dev/resources/hosts/family-community-blacklist"
+hagezi_gambling = "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/rpz/gambling.txt"
 
 [outputs]
 
-# General-purpose DNS filtering database.
-"stevenblack, adguard_dns, oisd_small" = "/var/lib/cdbgen/general.cdb"
+"urlhaus, oisd, onehosts, holepl, bebasid_filtering" = "/var/lib/cdbgen/default.cdb"
 
-# Minimal fallback database.
-"stevenblack" = "/var/lib/cdbgen/minimal.cdb"
+"alsyundawy_gambling, oisd_nsfw, bebasid_filtering, stevenblack, bebasid_family, holepl, hagezi_gambling" = "/var/lib/cdbgen/family.cdb"
+
+"urlhaus, holepl, stevenblack, bebasid_filtering" = "/var/lib/cdbgen/security.cdb"
