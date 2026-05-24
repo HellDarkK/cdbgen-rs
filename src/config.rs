@@ -12,7 +12,14 @@ use crate::error::ConfigError;
 #[derive(Debug, Deserialize)]
 struct RawConfig {
     sources: Option<BTreeMap<String, String>>,
-    outputs: Option<BTreeMap<String, String>>,
+    outputs: Option<BTreeMap<String, RawOutputPaths>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RawOutputPaths {
+    One(String),
+    Many(Vec<String>),
 }
 
 #[derive(Debug, Clone)]
@@ -87,28 +94,38 @@ impl Config {
         }
 
         let mut outputs = Vec::new();
-        for (group, path) in raw_outputs {
+        for (group, raw_paths) in raw_outputs {
             let source_ids = parse_output_group(&group);
             if source_ids.is_empty() {
                 return Err(ConfigError::EmptyOutputGroup { group });
             }
-            if path.trim().is_empty() {
-                return Err(ConfigError::EmptyOutputPath { group });
-            }
             for source_id in &source_ids {
                 if !sources.contains_key(source_id) {
                     return Err(ConfigError::UnknownOutputSource {
-                        group,
+                        group: group.clone(),
                         source_id: source_id.clone(),
                     });
                 }
             }
 
-            outputs.push(OutputConfig {
-                group,
-                source_ids,
-                path: PathBuf::from(path),
-            });
+            let paths = raw_paths.into_paths();
+            if paths.is_empty() {
+                return Err(ConfigError::EmptyOutputPath { group });
+            }
+
+            for path in paths {
+                if path.trim().is_empty() {
+                    return Err(ConfigError::EmptyOutputPath {
+                        group: group.clone(),
+                    });
+                }
+
+                outputs.push(OutputConfig {
+                    group: group.clone(),
+                    source_ids: source_ids.clone(),
+                    path: PathBuf::from(path),
+                });
+            }
         }
 
         Ok(Self { sources, outputs })
@@ -120,6 +137,41 @@ impl Config {
             .flat_map(|output| output.source_ids.iter().cloned())
             .collect()
     }
+}
+
+impl RawOutputPaths {
+    fn into_paths(self) -> Vec<String> {
+        match self {
+            Self::One(path) => parse_quoted_path_list(&path).unwrap_or_else(|| vec![path]),
+            Self::Many(paths) => paths,
+        }
+    }
+}
+
+fn parse_quoted_path_list(value: &str) -> Option<Vec<String>> {
+    let parts = value.split(',').collect::<Vec<_>>();
+    if parts.len() < 2 {
+        return None;
+    }
+
+    let mut paths = Vec::with_capacity(parts.len());
+    for part in parts {
+        let trimmed = part.trim();
+        let mut chars = trimmed.chars();
+        let quote = chars.next()?;
+        if quote != '\'' && quote != '"' {
+            return None;
+        }
+        if trimmed.len() < quote.len_utf8() * 2 {
+            return None;
+        }
+        if !trimmed.ends_with(quote) {
+            return None;
+        }
+        paths.push(trimmed[quote.len_utf8()..trimmed.len() - quote.len_utf8()].to_owned());
+    }
+
+    Some(paths)
 }
 
 fn parse_output_group(group: &str) -> Vec<String> {
@@ -163,6 +215,60 @@ mod tests {
         assert_eq!(cfg.sources.len(), 2);
         assert_eq!(cfg.outputs[0].source_ids, vec!["adblock-a", "adblock_b"]);
         assert_eq!(cfg.selected_source_ids().len(), 2);
+    }
+
+    #[test]
+    fn expands_output_path_array() {
+        let cfg = parse(
+            r#"
+            [sources]
+            a = "https://example.com/a"
+
+            [outputs]
+            a = ["/tmp/a.cdb", "/tmp/b.cdb"]
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(cfg.outputs.len(), 2);
+        assert_eq!(cfg.outputs[0].path, PathBuf::from("/tmp/a.cdb"));
+        assert_eq!(cfg.outputs[1].path, PathBuf::from("/tmp/b.cdb"));
+        assert_eq!(cfg.outputs[0].source_ids, vec!["a"]);
+        assert_eq!(cfg.outputs[1].source_ids, vec!["a"]);
+    }
+
+    #[test]
+    fn expands_quoted_comma_output_path_string() {
+        let cfg = parse(
+            r#"
+            [sources]
+            a = "https://example.com/a"
+
+            [outputs]
+            a = "'/tmp/a.cdb', '/tmp/b.cdb'"
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(cfg.outputs.len(), 2);
+        assert_eq!(cfg.outputs[0].path, PathBuf::from("/tmp/a.cdb"));
+        assert_eq!(cfg.outputs[1].path, PathBuf::from("/tmp/b.cdb"));
+    }
+
+    #[test]
+    fn rejects_empty_output_path_array() {
+        let err = parse(
+            r#"
+            [sources]
+            a = "https://example.com/a"
+
+            [outputs]
+            a = []
+            "#,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, ConfigError::EmptyOutputPath { .. }));
     }
 
     #[test]
@@ -219,32 +325,41 @@ mod tests {
         assert_eq!(
             cfg.sources.keys().cloned().collect::<BTreeSet<_>>(),
             BTreeSet::from([
-                "alsyundawy_gambling".to_string(),
-                "bebasid_family".to_string(),
-                "bebasid_filtering".to_string(),
-                "hagezi_gambling".to_string(),
-                "holepl".to_string(),
-                "oisd".to_string(),
-                "oisd_nsfw".to_string(),
-                "onehosts".to_string(),
-                "stevenblack".to_string(),
-                "urlhaus".to_string(),
+                "adblock_example".to_string(),
+                "hosts_example".to_string(),
+                "rpz_example".to_string(),
+                "unbound_example".to_string(),
             ])
         );
-        assert!(
-            cfg.outputs
-                .iter()
-                .any(|output| output.path.ends_with("default.cdb"))
+        assert_example_output(
+            &cfg,
+            "/var/lib/cdbgen/default.cdb",
+            &["hosts_example", "adblock_example"],
         );
-        assert!(
-            cfg.outputs
-                .iter()
-                .any(|output| output.path.ends_with("family.cdb"))
+        assert_example_output(
+            &cfg,
+            "/var/lib/cdbgen/combined.cdb",
+            &["hosts_example", "unbound_example", "rpz_example"],
         );
-        assert!(
-            cfg.outputs
+        assert_example_output(
+            &cfg,
+            "/srv/www/blocklists/combined.cdb",
+            &["hosts_example", "unbound_example", "rpz_example"],
+        );
+    }
+
+    fn assert_example_output(cfg: &Config, path: &str, source_ids: &[&str]) {
+        let output = cfg
+            .outputs
+            .iter()
+            .find(|output| output.path == Path::new(path))
+            .unwrap_or_else(|| panic!("missing output {path}"));
+        assert_eq!(
+            output.source_ids,
+            source_ids
                 .iter()
-                .any(|output| output.path.ends_with("security.cdb"))
+                .map(|source_id| (*source_id).to_string())
+                .collect::<Vec<_>>()
         );
     }
 }

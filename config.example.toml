@@ -9,7 +9,7 @@
 # Source IDs must match: ^[a-zA-Z0-9_-]+$
 #
 # Source format is autodetected:
-#   hostfile - hosts/plain-domain list. Field 0 auto behavior accepts
+#   hostfile - hosts/plain-domain list. field=0 auto behavior accepts
 #              domain IP, IP domain, and bare domains.
 #   adblock  - Adblock/uBO-style exact-domain rules, with @@ exceptions.
 #   unbound  - Unbound local-zone/local-data format.
@@ -17,26 +17,25 @@
 
 [sources]
 
-# Shared sources.
-urlhaus = "https://urlhaus.abuse.ch/downloads/hostfile/"
-holepl = "https://hole.cert.pl/domains/v2/domains.txt"
-bebasid_filtering = "https://raw.githubusercontent.com/bebasid/bebasdns/main/dev/resources/hosts/custom-filtering-rules-blocklist"
-stevenblack = "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"
+# Hosts/plain-domain source.
+hosts_example = "https://example.com/blocklists/hosts.txt"
 
-# BebasDNS default profile.
-oisd = "https://big.oisd.nl/unbound"
-onehosts = "https://badmojr.github.io/1Hosts/Lite/unbound.conf"
+# Adblock/uBO-style exact-domain rules.
+adblock_example = "https://example.com/blocklists/filter.txt"
 
-# BebasDNS family profile.
-alsyundawy_gambling = "https://raw.githubusercontent.com/alsyundawy/TrustPositif/refs/heads/main/alsyundawy_gambling.txt"
-oisd_nsfw = "https://nsfw.oisd.nl/unbound"
-bebasid_family = "https://raw.githubusercontent.com/bebasid/bebasdns/refs/heads/main/dev/resources/hosts/family-community-blacklist"
-hagezi_gambling = "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/rpz/gambling.txt"
+# Unbound local-zone/local-data source.
+unbound_example = "https://example.com/blocklists/unbound.conf"
+
+# RPZ CNAME . source.
+rpz_example = "https://example.com/blocklists/rpz.txt"
 
 [outputs]
 
-"urlhaus, oisd, onehosts, holepl, bebasid_filtering" = "/var/lib/cdbgen/default.cdb"
+# Single output path.
+"hosts_example, adblock_example" = "/var/lib/cdbgen/default.cdb"
 
-"alsyundawy_gambling, oisd_nsfw, bebasid_filtering, stevenblack, bebasid_family, holepl, hagezi_gambling" = "/var/lib/cdbgen/family.cdb"
-
-"urlhaus, holepl, stevenblack, bebasid_filtering" = "/var/lib/cdbgen/security.cdb"
+# Multiple output paths for the same source group.
+"hosts_example, unbound_example, rpz_example" = [
+    "/var/lib/cdbgen/combined.cdb",
+    "/srv/www/blocklists/combined.cdb",
+]
