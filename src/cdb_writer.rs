@@ -1,5 +1,4 @@
 use std::{
-    collections::BTreeSet,
     fs::{self, File, OpenOptions},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -9,7 +8,7 @@ use crate::{cdb_fast::FastCdbMake, config::OutputKeyFormat, error::OutputError};
 
 pub fn write_cdb_atomic(
     path: &Path,
-    domains: &BTreeSet<String>,
+    domains: &[String],
     key_format: OutputKeyFormat,
 ) -> Result<(), OutputError> {
     let parent = path
@@ -41,7 +40,7 @@ pub fn write_cdb_atomic(
 fn write_cdb_to_temp(
     tmp_path: &Path,
     final_path: &Path,
-    domains: &BTreeSet<String>,
+    domains: &[String],
     key_format: OutputKeyFormat,
 ) -> Result<(), OutputError> {
     let file = OpenOptions::new()
@@ -231,7 +230,7 @@ mod tests {
     fn writes_readable_cdb_with_empty_values() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("out.cdb");
-        let domains = BTreeSet::from(["a.example".to_string(), "b.example".to_string()]);
+        let domains = vec!["a.example".to_string(), "b.example".to_string()];
 
         write_cdb_atomic(&path, &domains, OutputKeyFormat::Wire).unwrap();
 
@@ -256,7 +255,7 @@ mod tests {
     fn plaintext_format_preserves_legacy_keys() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("out.cdb");
-        let domains = BTreeSet::from(["a.example".to_string()]);
+        let domains = vec!["a.example".to_string()];
 
         write_cdb_atomic(&path, &domains, OutputKeyFormat::Plaintext).unwrap();
 
@@ -270,11 +269,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path_a = dir.path().join("a.cdb");
         let path_b = dir.path().join("b.cdb");
-        let domains = BTreeSet::from([
+        let domains = vec![
             "z.example".to_string(),
             "a.example".to_string(),
             "m.example".to_string(),
-        ]);
+        ];
 
         write_cdb_atomic(&path_a, &domains, OutputKeyFormat::Wire).unwrap();
         write_cdb_atomic(&path_b, &domains, OutputKeyFormat::Wire).unwrap();

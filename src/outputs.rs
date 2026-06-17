@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use crate::{
     cdb_writer::write_cdb_atomic, config::OutputConfig, error::OutputError, parser::ParsedSource,
@@ -8,7 +8,7 @@ use crate::{
 pub enum OutputPlan {
     Ready {
         output: OutputConfig,
-        domains: BTreeSet<String>,
+        domains: Vec<String>,
         blocks_before_allow: usize,
         allows: usize,
     },
@@ -27,12 +27,24 @@ pub struct OutputWriteSummary {
     pub empty_outputs: usize,
 }
 
+struct MergedGroup {
+    /// Sorted, deduplicated, allow-subtracted block list.
+    blocks: Vec<String>,
+    blocks_before_allow: usize,
+    allows: usize,
+}
+
 pub fn build_output_domains(
     outputs: &[OutputConfig],
-    mut parsed: BTreeMap<String, ParsedSource>,
-    unavailable: &BTreeSet<String>,
+    parsed: BTreeMap<String, ParsedSource>,
+    unavailable: &std::collections::BTreeSet<String>,
 ) -> Vec<OutputPlan> {
     let mut plans = Vec::with_capacity(outputs.len());
+    // Cache merged groups by their source-id signature so outputs that share
+    // sources (e.g. the same group written to two paths) reuse the same
+    // sorted/deduped Vec instead of re-merging or — as a previous bug —
+    // emptying the source on the first pass via mem::take.
+    let mut cache: BTreeMap<Vec<String>, MergedGroup> = BTreeMap::new();
 
     for output in outputs {
         let missing: Vec<String> = output
@@ -52,39 +64,90 @@ pub fn build_output_domains(
             continue;
         }
 
-        let mut blocks = BTreeSet::new();
-        let mut allows = BTreeSet::new();
-        for source_id in &output.source_ids {
-            if let Some(source) = parsed.get_mut(source_id) {
-                // BTreeSet::append merges two trees in sorted order, O(n+m),
-                // instead of cloning each element with extend().iter().cloned().
-                let mut src_blocks = std::mem::take(&mut source.blocks);
-                let mut src_allows = std::mem::take(&mut source.allows);
-                blocks.append(&mut src_blocks);
-                allows.append(&mut src_allows);
-            }
-        }
+        let signature = output.source_ids.clone();
+        let merged = cache.entry(signature).or_insert_with(|| merge_group(&output.source_ids, &parsed));
 
-        let blocks_before_allow = blocks.len();
-        for allow in &allows {
-            blocks.remove(allow);
-        }
-
-        if blocks.is_empty() {
+        if merged.blocks.is_empty() {
             plans.push(OutputPlan::Empty {
                 output: output.clone(),
             });
         } else {
             plans.push(OutputPlan::Ready {
                 output: output.clone(),
-                domains: blocks,
-                blocks_before_allow,
-                allows: allows.len(),
+                domains: merged.blocks.clone(),
+                blocks_before_allow: merged.blocks_before_allow,
+                allows: merged.allows,
             });
         }
     }
 
     plans
+}
+
+/// Merge the named sources into a single sorted/deduped block list, with
+/// `allow` entries subtracted. Returns the `MergedGroup` that downstream
+/// outputs will cache and clone.
+fn merge_group(
+    source_ids: &[String],
+    parsed: &BTreeMap<String, ParsedSource>,
+) -> MergedGroup {
+    let mut blocks: Vec<String> = Vec::new();
+    let mut allows: Vec<String> = Vec::new();
+    for source_id in source_ids {
+        if let Some(source) = parsed.get(source_id) {
+            blocks.extend(source.blocks.iter().cloned());
+            allows.extend(source.allows.iter().cloned());
+        }
+    }
+    let blocks_before_allow = blocks.len();
+    if !allows.is_empty() {
+        // Sort + dedup allows, then remove them from blocks (also sorted+deduped).
+        // `retain` on a sorted vec with a sorted needle is O(n+m) when we
+        // walk both in order; here we use a HashSet-style lookup via
+        // sort_unstable + binary_search because the allow list is typically
+        // tiny compared to blocks. binary_search requires a sorted needle.
+        allows.sort_unstable();
+        allows.dedup();
+        // Sort blocks now so the allow-subtract is one linear pass instead
+        // of n × O(log n) HashSet lookups. (The downstream writer also wants
+        // sorted input for deterministic CDB output.)
+        blocks.sort_unstable();
+        blocks.dedup();
+        subtract_sorted(&mut blocks, &allows);
+    } else {
+        blocks.sort_unstable();
+        blocks.dedup();
+    }
+    MergedGroup {
+        blocks,
+        blocks_before_allow,
+        allows: allows.len(),
+    }
+}
+
+/// Remove every element of `needles` from `haystack` in place. Both inputs
+/// must be sorted+deduped. Linear pass; `needles` is the smaller set.
+#[inline]
+fn subtract_sorted(haystack: &mut Vec<String>, needles: &[String]) {
+    if needles.is_empty() {
+        return;
+    }
+    let mut write = 0usize;
+    let mut read = 0usize;
+    let mut n = 0usize;
+    while read < haystack.len() {
+        if n < needles.len() && haystack[read] == needles[n] {
+            // skip this element
+            n += 1;
+        } else {
+            if write != read {
+                haystack[write] = std::mem::take(&mut haystack[read]);
+            }
+            write += 1;
+        }
+        read += 1;
+    }
+    haystack.truncate(write);
 }
 
 pub fn write_outputs(plans: &[OutputPlan]) -> Result<OutputWriteSummary, OutputError> {
@@ -144,7 +207,7 @@ pub fn write_outputs(plans: &[OutputPlan]) -> Result<OutputWriteSummary, OutputE
 mod tests {
     use super::*;
     use crate::parser::ParseStats;
-    use std::path::PathBuf;
+    use std::{collections::BTreeSet, path::PathBuf};
 
     fn output(source_ids: Vec<&str>) -> OutputConfig {
         OutputConfig {
@@ -175,7 +238,7 @@ mod tests {
 
         match &plans[0] {
             OutputPlan::Ready { domains, .. } => {
-                assert_eq!(domains, &BTreeSet::from(["a.example".to_string()]));
+                assert_eq!(domains, &vec!["a.example".to_string()]);
             }
             other => panic!("{other:?}"),
         }
@@ -195,5 +258,33 @@ mod tests {
         sources.insert("a".into(), parsed(&["a.example"], &["a.example"]));
         let plans = build_output_domains(&[output(vec!["a"])], sources, &BTreeSet::new());
         assert!(matches!(plans[0], OutputPlan::Empty { .. }));
+    }
+
+    #[test]
+    fn shares_domains_across_outputs_with_same_sources() {
+        // Two outputs targeting different paths but built from the same
+        // source group must each receive the merged domain set. The previous
+        // implementation used mem::take and would empty the source after the
+        // first output, leaving the second with zero domains.
+        let mut sources = BTreeMap::new();
+        sources.insert(
+            "a".into(),
+            parsed(&["a.example", "b.example"], &["b.example"]),
+        );
+        let mut out_a = output(vec!["a"]);
+        out_a.path = PathBuf::from("/tmp/a.cdb");
+        let mut out_b = output(vec!["a"]);
+        out_b.path = PathBuf::from("/tmp/b.cdb");
+        let plans = build_output_domains(&[out_a, out_b], sources, &BTreeSet::new());
+
+        assert_eq!(plans.len(), 2);
+        for plan in &plans {
+            match plan {
+                OutputPlan::Ready { domains, .. } => {
+                    assert_eq!(domains, &vec!["a.example".to_string()]);
+                }
+                other => panic!("expected Ready, got {other:?}"),
+            }
+        }
     }
 }

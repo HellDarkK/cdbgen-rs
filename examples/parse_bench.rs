@@ -72,9 +72,10 @@ fn main() {
     let parse_elapsed = t.elapsed();
     println!("[parse]   {:>9.3?}  blocks={total_blocks} allows={total_allows}", parse_elapsed);
 
+    let group_ids = vec!["hosts".into(), "adblock".into(), "unbound".into(), "rpz".into()];
     let outputs = vec![OutputConfig {
         group: "merged".into(),
-        source_ids: vec!["hosts".into(), "adblock".into(), "unbound".into(), "rpz".into()],
+        source_ids: group_ids.clone(),
         path: tmp.join("merged.cdb"),
         key_format: OutputKeyFormat::Wire,
     }];
@@ -87,6 +88,42 @@ fn main() {
         _ => 0,
     };
     println!("[plan]    {:>9.3?}  merged={merged_domains}", plan_elapsed);
+
+    // Shared-group case: same source_ids written to two paths. Mirrors the
+    // real config (dnsdist + cdn write of the same merged set). The fix
+    // caches the merged BTreeSet so the second output reuses it instead of
+    // re-appending from the (now-empty) sources.
+    let shared_outputs = vec![
+        OutputConfig {
+            group: "shared".into(),
+            source_ids: group_ids.clone(),
+            path: tmp.join("shared-a.cdb"),
+            key_format: OutputKeyFormat::Wire,
+        },
+        OutputConfig {
+            group: "shared".into(),
+            source_ids: group_ids.clone(),
+            path: tmp.join("shared-b.cdb"),
+            key_format: OutputKeyFormat::Wire,
+        },
+    ];
+    let mut shared_parsed: BTreeMap<String, cdbgen_rs::parser::ParsedSource> = BTreeMap::new();
+    for (id, body) in &bodies {
+        shared_parsed.insert(id.clone(), parse_source_bytes(body));
+    }
+    let t = Instant::now();
+    let shared_plans = build_output_domains(&shared_outputs, shared_parsed, &unavailable);
+    let shared_plan_elapsed = t.elapsed();
+    let a = match &shared_plans[0] {
+        cdbgen_rs::outputs::OutputPlan::Ready { domains, .. } => domains.len(),
+        _ => 0,
+    };
+    let b = match &shared_plans[1] {
+        cdbgen_rs::outputs::OutputPlan::Ready { domains, .. } => domains.len(),
+        _ => 0,
+    };
+    assert_eq!(a, b, "shared outputs must agree on domain count");
+    println!("[plan2]   {:>9.3?}  shared={a} (both outputs)", shared_plan_elapsed);
 
     let t = Instant::now();
     for plan in &plans {

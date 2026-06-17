@@ -1,8 +1,4 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    net::IpAddr,
-    str::FromStr,
-};
+use std::{collections::BTreeMap, net::IpAddr, str::FromStr};
 
 use crate::{error::AppError, fetcher::FetchedSource, normalize::normalize_domain};
 
@@ -38,11 +34,18 @@ pub struct ParseStats {
     pub duplicate_allows: usize,
 }
 
+/// Parsed source data.
+///
+/// `blocks` and `allows` are kept as `Vec<String>` (sorted, deduplicated)
+/// rather than `BTreeSet<String>`. On the hot path we push every accepted
+/// domain into the vec and run a single `sort_unstable` + `dedup` at the
+/// end. BTreeSet insertion was the dominant cost (≈1.65M small heap allocs
+/// per source); vec-push is amortized-O(1) and dedup is one O(n) pass.
 #[derive(Debug, Clone)]
 pub struct ParsedSource {
     pub detected_format: SourceFormat,
-    pub blocks: BTreeSet<String>,
-    pub allows: BTreeSet<String>,
+    pub blocks: Vec<String>,
+    pub allows: Vec<String>,
     pub stats: ParseStats,
 }
 
@@ -72,8 +75,8 @@ pub fn parse_source_bytes(body: &[u8]) -> ParsedSource {
     let text = String::from_utf8_lossy(body);
     let mut parsed = ParsedSource {
         detected_format: detect_source_format(&text),
-        blocks: BTreeSet::new(),
-        allows: BTreeSet::new(),
+        blocks: Vec::new(),
+        allows: Vec::new(),
         stats: ParseStats::default(),
     };
 
@@ -104,16 +107,8 @@ pub fn parse_source_bytes(body: &[u8]) -> ParsedSource {
 
         for domain in extracted {
             match domain.kind {
-                RuleKind::Block => {
-                    if !parsed.blocks.insert(domain.domain) {
-                        parsed.stats.duplicate_blocks += 1;
-                    }
-                }
-                RuleKind::Allow => {
-                    if !parsed.allows.insert(domain.domain) {
-                        parsed.stats.duplicate_allows += 1;
-                    }
-                }
+                RuleKind::Block => parsed.blocks.push(domain.domain),
+                RuleKind::Allow => parsed.allows.push(domain.domain),
             }
         }
 
@@ -121,7 +116,30 @@ pub fn parse_source_bytes(body: &[u8]) -> ParsedSource {
         parsed.stats.accepted_allows += parsed.allows.len() - before_allows;
     }
 
+    finalize_sorted_set(&mut parsed.blocks, &mut parsed.stats.duplicate_blocks);
+    finalize_sorted_set(&mut parsed.allows, &mut parsed.stats.duplicate_allows);
+
     parsed
+}
+
+/// Sort `vec` in place and collapse consecutive duplicates. `dup_count` is
+/// incremented by the number of duplicates that were dropped.
+#[inline]
+fn finalize_sorted_set(vec: &mut Vec<String>, dup_count: &mut usize) {
+    if vec.len() < 2 {
+        return;
+    }
+    vec.sort_unstable();
+    let mut write = 1usize;
+    for read in 1..vec.len() {
+        if vec[read] == vec[write - 1] {
+            *dup_count += 1;
+        } else {
+            vec[write] = std::mem::take(&mut vec[read]);
+            write += 1;
+        }
+    }
+    vec.truncate(write);
 }
 
 pub fn detect_source_format(text: &str) -> SourceFormat {
@@ -544,13 +562,14 @@ mod tests {
             "#,
         );
 
-        assert!(parsed.blocks.contains("example.com"));
-        assert!(parsed.blocks.contains("ads.example.com"));
-        assert!(parsed.blocks.contains("alias.example.net"));
-        assert!(parsed.blocks.contains("tracker.example.net"));
-        assert!(parsed.blocks.contains("agh.example.org"));
-        assert!(parsed.allows.contains("allow.example.org"));
-        assert!(!parsed.blocks.contains("path.example"));
+        let has = |v: &Vec<String>, s: &str| v.iter().any(|x| x == s);
+        assert!(has(&parsed.blocks, "example.com"));
+        assert!(has(&parsed.blocks, "ads.example.com"));
+        assert!(has(&parsed.blocks, "alias.example.net"));
+        assert!(has(&parsed.blocks, "tracker.example.net"));
+        assert!(has(&parsed.blocks, "agh.example.org"));
+        assert!(has(&parsed.allows, "allow.example.org"));
+        assert!(!has(&parsed.blocks, "path.example"));
         assert_eq!(parsed.stats.comment_lines, 1);
         assert!(parsed.stats.rejected_lines >= 3);
     }
@@ -585,10 +604,11 @@ mod tests {
             "#,
         );
 
-        assert!(parsed.blocks.contains("ads-one.example"));
-        assert!(parsed.blocks.contains("ads-two.example"));
-        assert!(parsed.blocks.contains("alias-two.example"));
-        assert!(parsed.blocks.contains("plain.example"));
+        let has = |s: &str| parsed.blocks.iter().any(|x| x == s);
+        assert!(has("ads-one.example"));
+        assert!(has("ads-two.example"));
+        assert!(has("alias-two.example"));
+        assert!(has("plain.example"));
     }
 
     #[test]
@@ -607,13 +627,14 @@ mod tests {
             "#,
         );
 
-        assert!(parsed.blocks.contains("ads.example.com"));
-        assert!(parsed.blocks.contains("tracker.example.net"));
-        assert!(parsed.blocks.contains("example.org"));
-        assert!(parsed.blocks.contains("wild.example.org"));
-        assert!(!parsed.blocks.contains("not-a-policy.example"));
-        assert!(!parsed.blocks.contains("a-record.example"));
-        assert!(!parsed.blocks.contains("localhost"));
+        let has_block = |s: &str| parsed.blocks.iter().any(|x| x == s);
+        assert!(has_block("ads.example.com"));
+        assert!(has_block("tracker.example.net"));
+        assert!(has_block("example.org"));
+        assert!(has_block("wild.example.org"));
+        assert!(!has_block("not-a-policy.example"));
+        assert!(!has_block("a-record.example"));
+        assert!(!has_block("localhost"));
     }
 
     #[test]
