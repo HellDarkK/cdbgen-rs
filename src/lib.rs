@@ -1,4 +1,5 @@
 pub mod cache;
+pub mod cdb_fast;
 pub mod cdb_writer;
 pub mod cli;
 pub mod config;
@@ -66,7 +67,7 @@ pub async fn run_with_cache(cli: Cli, cache: cache::Cache) -> Result<i32, AppErr
     let parsed = parse_sources(available).await?;
     log_parse_summary(&parsed);
 
-    let plans = build_output_domains(&config.outputs, &parsed, &unavailable);
+    let plans = build_output_domains(&config.outputs, parsed, &unavailable);
 
     let skipped = plans
         .iter()

@@ -1,14 +1,11 @@
 use std::{
-    borrow::Cow,
     collections::BTreeSet,
     fs::{self, File, OpenOptions},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use cdb::CDBMake;
-
-use crate::{config::OutputKeyFormat, error::OutputError};
+use crate::{cdb_fast::FastCdbMake, config::OutputKeyFormat, error::OutputError};
 
 pub fn write_cdb_atomic(
     path: &Path,
@@ -56,30 +53,57 @@ fn write_cdb_to_temp(
             source,
         })?;
 
-    let mut writer = CDBMake::new(file).map_err(|source| OutputError::CreateTemp {
+    let mut writer = FastCdbMake::new(file).map_err(|source| OutputError::CreateTemp {
         path: tmp_path.to_path_buf(),
         source,
     })?;
-    for domain in domains {
-        let key = cdb_key(domain, key_format).map_err(|_| OutputError::InvalidWireKey {
-            path: final_path.to_path_buf(),
-            domain: domain.clone(),
-        })?;
-        writer
-            .add(&key, b"")
-            .map_err(|source| OutputError::WriteRecord {
-                path: final_path.to_path_buf(),
-                source,
-            })?;
-    }
+    // Pre-allocate the entries vec so add() never reallocates.
+    writer.reserve(domains.len());
 
+    match key_format {
+        OutputKeyFormat::Wire => {
+            // Stack-allocated wire-key buffer (max 255 bytes per RFC 1035).
+            // Reusing a stack buffer across iterations avoids the per-domain
+            // Vec allocation that `domain_to_wire` would do.
+            let mut key_buf = [0u8; 255];
+            for domain in domains {
+                let key_len = match encode_wire_into(&mut key_buf, domain) {
+                    Ok(n) => n,
+                    Err(_) => {
+                        return Err(OutputError::InvalidWireKey {
+                            path: final_path.to_path_buf(),
+                            domain: domain.clone(),
+                        });
+                    }
+                };
+                if let Err(source) = writer.add(&key_buf[..key_len], b"") {
+                    return Err(OutputError::WriteRecord {
+                        path: final_path.to_path_buf(),
+                        source,
+                    });
+                }
+            }
+        }
+        OutputKeyFormat::Plaintext => {
+            for domain in domains {
+                if let Err(source) = writer.add(domain.as_bytes(), b"") {
+                    return Err(OutputError::WriteRecord {
+                        path: final_path.to_path_buf(),
+                        source,
+                    });
+                }
+            }
+        }
+    }
     writer.finish().map_err(|source| OutputError::Finalize {
         path: final_path.to_path_buf(),
         source,
     })?;
-
+    // `sync_data` (not `sync_all`) is sufficient here: the directory fsync
+    // below persists the file's metadata (size, mtime, etc.) as part of the
+    // directory entry, so we only need to flush the file's data blocks.
     File::open(tmp_path)
-        .and_then(|file| file.sync_all())
+        .and_then(|file| file.sync_data())
         .map_err(|source| OutputError::Fsync {
             path: tmp_path.to_path_buf(),
             source,
@@ -88,35 +112,80 @@ fn write_cdb_to_temp(
     Ok(())
 }
 
-fn cdb_key(domain: &str, key_format: OutputKeyFormat) -> Result<Cow<'_, [u8]>, WireKeyError> {
-    match key_format {
-        OutputKeyFormat::Wire => domain_to_wire(domain).map(Cow::Owned),
-        OutputKeyFormat::Plaintext => Ok(Cow::Borrowed(domain.as_bytes())),
+/// Encode a domain as a DNS wire-format qname into a stack-allocated buffer.
+/// Returns the number of bytes written.
+///
+/// Tighter than `&str::split('.')`-based encoders because there's no per-call
+/// iterator and no `extend_from_slice` bounds checks per label.
+#[inline]
+fn encode_wire_into(buf: &mut [u8; 255], domain: &str) -> Result<usize, WireKeyError> {
+    let bytes = domain.as_bytes();
+    if bytes.is_empty() || bytes.len() > 253 {
+        return Err(WireKeyError);
     }
+    // Fast ASCII check: any byte >= 0x80 is non-ASCII.
+    for &b in bytes {
+        if b >= 0x80 {
+            return Err(WireKeyError);
+        }
+    }
+    let mut out = 0usize;
+    let mut last_dot = 0usize;
+    let mut i = 0usize;
+    let len = bytes.len();
+    while i < len {
+        if bytes[i] == b'.' {
+            let label_len = i - last_dot;
+            if label_len == 0 || label_len > 63 {
+                return Err(WireKeyError);
+            }
+            buf[out] = label_len as u8;
+            out += 1;
+            // SAFETY: buf is 255 bytes; total output never exceeds 255.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    bytes.as_ptr().add(last_dot),
+                    buf.as_mut_ptr().add(out),
+                    label_len,
+                );
+            }
+            out += label_len;
+            i += 1;
+            last_dot = i;
+        } else {
+            i += 1;
+        }
+    }
+    let label_len = len - last_dot;
+    if label_len == 0 || label_len > 63 {
+        return Err(WireKeyError);
+    }
+    buf[out] = label_len as u8;
+    out += 1;
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            bytes.as_ptr().add(last_dot),
+            buf.as_mut_ptr().add(out),
+            label_len,
+        );
+    }
+    out += label_len;
+    buf[out] = 0;
+    out += 1;
+    debug_assert!(out <= 255, "wire key overflow: {out}");
+    Ok(out)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WireKeyError;
 
+/// Public API: encode a domain as a DNS wire-format qname (used by tests
+/// and any external code that wants the wire bytes for a single domain).
 pub fn domain_to_wire(domain: &str) -> Result<Vec<u8>, WireKeyError> {
-    if domain.is_empty() || domain.len() > 253 || !domain.is_ascii() {
-        return Err(WireKeyError);
-    }
-
     let mut wire = Vec::with_capacity(domain.len() + 2);
-    for label in domain.split('.') {
-        if label.is_empty() || label.len() > 63 {
-            return Err(WireKeyError);
-        }
-        wire.push(label.len() as u8);
-        wire.extend_from_slice(label.as_bytes());
-    }
-    wire.push(0);
-
-    if wire.len() > 255 {
-        return Err(WireKeyError);
-    }
-
+    let mut stack = [0u8; 255];
+    let n = encode_wire_into(&mut stack, domain)?;
+    wire.extend_from_slice(&stack[..n]);
     Ok(wire)
 }
 

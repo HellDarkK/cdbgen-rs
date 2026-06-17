@@ -133,7 +133,14 @@ pub fn detect_source_format(text: &str) -> SourceFormat {
         rpz: usize,
     }
 
+    // Detect on a small sample; format is usually obvious within the first
+    // handful of non-blank, non-comment lines. Capping the sample avoids
+    // running 4 format extractors on every line of a multi-million-line
+    // source, which dominated parse time.
+    const SAMPLE_LIMIT: usize = 200;
+    const DECISIVE_SCORE: usize = 40;
     let mut scores = Scores::default();
+    let mut seen = 0usize;
     for (index, raw_line) in text.lines().enumerate() {
         let mut line = raw_line.trim();
         if index == 0 {
@@ -141,6 +148,10 @@ pub fn detect_source_format(text: &str) -> SourceFormat {
         }
         if line.is_empty() || is_comment(line) {
             continue;
+        }
+        seen += 1;
+        if seen > SAMPLE_LIMIT {
+            break;
         }
 
         if looks_like_unbound_line(line) {
@@ -154,6 +165,14 @@ pub fn detect_source_format(text: &str) -> SourceFormat {
         }
         if !extract_hosts_line(line).unwrap_or_default().is_empty() {
             scores.hostfile += 1;
+        }
+
+        if scores.unbound >= DECISIVE_SCORE
+            || scores.rpz >= DECISIVE_SCORE
+            || scores.adblock >= DECISIVE_SCORE
+            || scores.hostfile >= DECISIVE_SCORE
+        {
+            break;
         }
     }
 
@@ -189,14 +208,20 @@ fn extract_domains(line: &str) -> Vec<ExtractedDomain> {
         }];
     }
 
-    if let Some(domain) = extract_rpz_line(line) {
+    // Parse tokens once and dispatch to the format-specific extractor.
+    let tokens = tokens_before_inline_comment(line);
+    if tokens.is_empty() {
+        return Vec::new();
+    }
+
+    if let Some(domain) = extract_rpz_line_with(&tokens) {
         return vec![ExtractedDomain {
             kind: RuleKind::Block,
             domain,
         }];
     }
 
-    if let Some(domains) = extract_hosts_line(line) {
+    if let Some(domains) = extract_hosts_line_with(&tokens) {
         return domains
             .into_iter()
             .map(|domain| ExtractedDomain {
@@ -244,19 +269,18 @@ fn extract_first_config_value(input: &str) -> Option<&str> {
     trimmed.split_whitespace().next()
 }
 
-fn extract_rpz_line(line: &str) -> Option<String> {
-    let tokens = tokens_before_inline_comment(line);
+fn extract_rpz_line_with(tokens: &Tokens<'_>) -> Option<String> {
     let (record_index, _) = tokens
         .iter()
         .enumerate()
         .skip(1)
         .find(|(_, token)| token.eq_ignore_ascii_case("CNAME"))?;
 
-    if tokens.get(record_index + 1).copied() != Some(".") {
+    if tokens.get(record_index + 1) != Some(".") {
         return None;
     }
 
-    let owner = tokens[0].trim_end_matches('.');
+    let owner = tokens.get(0)?.trim_end_matches('.');
     let owner = owner.strip_prefix("*.").unwrap_or(owner);
     if owner == "@" || owner.starts_with('$') {
         return None;
@@ -265,32 +289,29 @@ fn extract_rpz_line(line: &str) -> Option<String> {
     normalize_domain(owner)
 }
 
+#[allow(dead_code)]
+fn extract_rpz_line(line: &str) -> Option<String> {
+    extract_rpz_line_with(&tokens_before_inline_comment(line))
+}
+
 fn looks_like_rpz_preamble(line: &str) -> bool {
     let tokens = tokens_before_inline_comment(line);
     if tokens.is_empty() {
         return false;
     }
 
-    tokens[0].starts_with('$')
-        || tokens
-            .iter()
-            .skip(1)
-            .any(|token| is_dns_class(token) || is_dns_record_type(token))
+    tokens.get(0).is_some_and(|t| t.starts_with('$'))
+        || tokens.iter().skip(1).any(|token| is_dns_class(token) || is_dns_record_type(token))
 }
 
-fn extract_hosts_line(line: &str) -> Option<Vec<String>> {
-    let tokens = tokens_before_inline_comment(line);
-    if tokens.is_empty() || looks_like_dns_record_line(&tokens) {
+fn extract_hosts_line_with(tokens: &Tokens<'_>) -> Option<Vec<String>> {
+    if tokens.is_empty() || looks_like_dns_record_line(tokens) {
         return None;
     }
 
-    let first = tokens[0];
+    let first = tokens.get(0)?;
     let domains = if IpAddr::from_str(first).is_ok() {
-        tokens
-            .into_iter()
-            .skip(1)
-            .filter_map(normalize_domain)
-            .collect()
+        tokens.iter().skip(1).filter_map(normalize_domain).collect()
     } else if tokens
         .get(1)
         .is_none_or(|second| IpAddr::from_str(second).is_ok())
@@ -307,18 +328,93 @@ fn extract_hosts_line(line: &str) -> Option<Vec<String>> {
     }
 }
 
-fn tokens_before_inline_comment(line: &str) -> Vec<&str> {
-    let mut tokens = Vec::new();
-    for token in line.split_whitespace() {
-        if is_inline_comment_token(token) {
-            break;
-        }
-        tokens.push(token);
-    }
-    tokens
+#[allow(dead_code)]
+fn extract_hosts_line(line: &str) -> Option<Vec<String>> {
+    extract_hosts_line_with(&tokens_before_inline_comment(line))
 }
 
-fn looks_like_dns_record_line(tokens: &[&str]) -> bool {
+/// Lazily tokenized slice of whitespace-separated tokens from `line` (without
+/// inline comments). Uses an inline fixed-size array for the common case to
+/// avoid heap allocation per parsed line.
+#[derive(Debug)]
+struct Tokens<'a> {
+    src: &'a str,
+    // (start, end) byte offsets into `src`. Up to 6 tokens inline.
+    inline: [(usize, usize); 6],
+    inline_len: u8,
+    overflow: Option<Vec<(usize, usize)>>,
+}
+
+impl<'a> Tokens<'a> {
+    fn parse(line: &'a str) -> Self {
+        let mut inline: [(usize, usize); 6] = [(0, 0); 6];
+        let mut inline_len: u8 = 0;
+        let mut overflow: Option<Vec<(usize, usize)>> = None;
+
+        let bytes = line.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            // Skip leading whitespace.
+            while i < bytes.len() && (bytes[i] as u8).is_ascii_whitespace() {
+                i += 1;
+            }
+            if i >= bytes.len() {
+                break;
+            }
+            let start = i;
+            // Find end of token.
+            while i < bytes.len() && !(bytes[i] as u8).is_ascii_whitespace() {
+                i += 1;
+            }
+            let end = i;
+            let tok = &line[start..end];
+            if is_inline_comment_token(tok) {
+                break;
+            }
+            if (inline_len as usize) < inline.len() {
+                inline[inline_len as usize] = (start, end);
+                inline_len += 1;
+            } else {
+                overflow.get_or_insert_with(|| Vec::with_capacity(8)).push((start, end));
+            }
+        }
+
+        Self { src: line, inline, inline_len, overflow }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.inline_len == 0 && self.overflow.as_ref().is_none_or(|v| v.is_empty())
+    }
+
+    #[allow(dead_code)]
+    fn len(&self) -> usize {
+        self.inline_len as usize + self.overflow.as_ref().map_or(0, |v| v.len())
+    }
+
+    fn get(&self, i: usize) -> Option<&'a str> {
+        if i < self.inline_len as usize {
+            let (s, e) = self.inline[i];
+            return Some(&self.src[s..e]);
+        }
+        let ov = self.overflow.as_ref()?;
+        ov.get(i - self.inline_len as usize).map(|(s, e)| &self.src[*s..*e])
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &'a str> + '_ {
+        let n = self.inline_len as usize;
+        (0..n).map(move |i| {
+            let (s, e) = self.inline[i];
+            &self.src[s..e]
+        })
+        .chain(self.overflow.iter().flatten().map(move |(s, e)| &self.src[*s..*e]))
+    }
+}
+
+fn tokens_before_inline_comment(line: &str) -> Tokens<'_> {
+    Tokens::parse(line)
+}
+
+fn looks_like_dns_record_line(tokens: &Tokens<'_>) -> bool {
     tokens
         .iter()
         .skip(1)

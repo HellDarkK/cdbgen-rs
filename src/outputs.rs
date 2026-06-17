@@ -29,7 +29,7 @@ pub struct OutputWriteSummary {
 
 pub fn build_output_domains(
     outputs: &[OutputConfig],
-    parsed: &BTreeMap<String, ParsedSource>,
+    mut parsed: BTreeMap<String, ParsedSource>,
     unavailable: &BTreeSet<String>,
 ) -> Vec<OutputPlan> {
     let mut plans = Vec::with_capacity(outputs.len());
@@ -55,9 +55,13 @@ pub fn build_output_domains(
         let mut blocks = BTreeSet::new();
         let mut allows = BTreeSet::new();
         for source_id in &output.source_ids {
-            if let Some(source) = parsed.get(source_id) {
-                blocks.extend(source.blocks.iter().cloned());
-                allows.extend(source.allows.iter().cloned());
+            if let Some(source) = parsed.get_mut(source_id) {
+                // BTreeSet::append merges two trees in sorted order, O(n+m),
+                // instead of cloning each element with extend().iter().cloned().
+                let mut src_blocks = std::mem::take(&mut source.blocks);
+                let mut src_allows = std::mem::take(&mut source.allows);
+                blocks.append(&mut src_blocks);
+                allows.append(&mut src_allows);
             }
         }
 
@@ -167,7 +171,7 @@ mod tests {
             "a".into(),
             parsed(&["a.example", "b.example"], &["b.example"]),
         );
-        let plans = build_output_domains(&[output(vec!["a"])], &sources, &BTreeSet::new());
+        let plans = build_output_domains(&[output(vec!["a"])], sources, &BTreeSet::new());
 
         match &plans[0] {
             OutputPlan::Ready { domains, .. } => {
@@ -181,7 +185,7 @@ mod tests {
     fn skips_outputs_with_unavailable_sources() {
         let sources = BTreeMap::new();
         let unavailable = BTreeSet::from(["b".to_string()]);
-        let plans = build_output_domains(&[output(vec!["a", "b"])], &sources, &unavailable);
+        let plans = build_output_domains(&[output(vec!["a", "b"])], sources, &unavailable);
         assert!(matches!(plans[0], OutputPlan::Skipped { .. }));
     }
 
@@ -189,7 +193,7 @@ mod tests {
     fn marks_empty_outputs() {
         let mut sources = BTreeMap::new();
         sources.insert("a".into(), parsed(&["a.example"], &["a.example"]));
-        let plans = build_output_domains(&[output(vec!["a"])], &sources, &BTreeSet::new());
+        let plans = build_output_domains(&[output(vec!["a"])], sources, &BTreeSet::new());
         assert!(matches!(plans[0], OutputPlan::Empty { .. }));
     }
 }
