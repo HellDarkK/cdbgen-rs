@@ -13,6 +13,44 @@ downloading it, make it executable:
 chmod +x cdbgen-rs-v0.1.4-x86_64-unknown-linux-musl
 ```
 
+## Build From Source
+
+You need Rust 1.88 or newer, installed with [rustup](https://rustup.rs). The
+crate uses edition 2024 and let chains. TLS uses rustls, so no system OpenSSL
+is needed.
+
+```bash
+git clone https://github.com/HellDarkK/cdbgen-rs.git
+cd cdbgen-rs
+cargo build --release --locked
+./target/release/cdbgen-rs --version
+```
+
+The binary is written to `target/release/cdbgen-rs`. To install it into
+`~/.cargo/bin` instead:
+
+```bash
+cargo install --path . --locked
+```
+
+To build the same static musl binary as the release workflow (the package
+install line is for Debian/Ubuntu):
+
+```bash
+rustup target add x86_64-unknown-linux-musl
+sudo apt-get install -y musl-tools
+cargo build --release --locked --target x86_64-unknown-linux-musl
+```
+
+That binary is written to
+`target/x86_64-unknown-linux-musl/release/cdbgen-rs`.
+
+Run the test suite with:
+
+```bash
+cargo test --all-targets --locked
+```
+
 ## Run It
 
 ```bash
