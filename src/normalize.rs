@@ -92,10 +92,7 @@ fn is_already_ascii_normalized(s: &str) -> Option<&str> {
 
 #[inline]
 fn is_valid_label(bytes: &[u8], start: usize, len: usize) -> bool {
-    len >= 1
-        && len <= 63
-        && bytes[start] != b'-'
-        && bytes[start + len - 1] != b'-'
+    (1..=63).contains(&len) && bytes[start] != b'-' && bytes[start + len - 1] != b'-'
 }
 
 #[cfg(test)]

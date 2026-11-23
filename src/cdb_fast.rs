@@ -7,7 +7,6 @@ use std::{
     cmp::max,
     fs::File,
     io::{BufWriter, Result, Seek, Write},
-    u32,
 };
 
 #[derive(Clone, Copy)]
@@ -46,10 +45,7 @@ impl FastCdbMake {
     /// the data in a single `write_all` call to amortize the BufWriter cost.
     pub fn add(&mut self, key: &[u8], data: &[u8]) -> Result<()> {
         if key.len() >= u32::MAX as usize || data.len() >= u32::MAX as usize {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Key or data too big",
-            ));
+            return Err(std::io::Error::other("Key or data too big"));
         }
         let keylen = key.len() as u32;
         let datalen = data.len() as u32;
@@ -67,7 +63,10 @@ impl FastCdbMake {
         for &b in key {
             h = h.wrapping_shl(5).wrapping_add(h) ^ (b as u32);
         }
-        self.entries.push(Entry { hash: h, pos: self.pos });
+        self.entries.push(Entry {
+            hash: h,
+            pos: self.pos,
+        });
         self.pos += 8 + keylen + datalen;
         Ok(())
     }
@@ -94,7 +93,9 @@ impl FastCdbMake {
         }
         drop(self.entries);
         let entries = sorted;
-        let maxsize = counts.iter().fold(1usize, |acc, &c| max(acc, c as usize * 2));
+        let maxsize = counts
+            .iter()
+            .fold(1usize, |acc, &c| max(acc, c as usize * 2));
 
         self.table.clear();
         self.table.resize(maxsize, Entry { hash: 0, pos: 0 });

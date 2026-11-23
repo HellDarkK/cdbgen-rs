@@ -65,7 +65,9 @@ pub fn build_output_domains(
         }
 
         let signature = output.source_ids.clone();
-        let merged = cache.entry(signature).or_insert_with(|| merge_group(&output.source_ids, &parsed));
+        let merged = cache
+            .entry(signature)
+            .or_insert_with(|| merge_group(&output.source_ids, &parsed));
 
         if merged.blocks.is_empty() {
             plans.push(OutputPlan::Empty {
@@ -87,10 +89,7 @@ pub fn build_output_domains(
 /// Merge the named sources into a single sorted/deduped block list, with
 /// `allow` entries subtracted. Returns the `MergedGroup` that downstream
 /// outputs will cache and clone.
-fn merge_group(
-    source_ids: &[String],
-    parsed: &BTreeMap<String, ParsedSource>,
-) -> MergedGroup {
+fn merge_group(source_ids: &[String], parsed: &BTreeMap<String, ParsedSource>) -> MergedGroup {
     let mut blocks: Vec<String> = Vec::new();
     let mut allows: Vec<String> = Vec::new();
     for source_id in source_ids {

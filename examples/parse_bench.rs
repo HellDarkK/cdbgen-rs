@@ -23,23 +23,45 @@ const RPZ_LINES: usize = 40_000;
 const COMMENT_RATIO: f64 = 0.04;
 
 const HOST_TLDS: &[&str] = &[
-    "com", "net", "org", "io", "co", "xyz", "site", "app", "dev", "me", "info", "biz", "us",
-    "ru", "de", "cn", "tk", "ml", "ga", "cf", "pw", "top", "vip", "live", "stream",
+    "com", "net", "org", "io", "co", "xyz", "site", "app", "dev", "me", "info", "biz", "us", "ru",
+    "de", "cn", "tk", "ml", "ga", "cf", "pw", "top", "vip", "live", "stream",
 ];
 const AD_TAGS: &[&str] = &[
-    "ad", "ads", "adsrvr", "doubleclick", "googlesyndication", "adservice", "tracker",
-    "metric", "telemetry", "banner", "pixel", "beacon", "affiliate", "sponsor", "promo",
-    "pop", "popup", "redirect", "click", "impression", "stats", "analytics", "score",
-    "cdn-ads", "static-ad", "tag-manager",
+    "ad",
+    "ads",
+    "adsrvr",
+    "doubleclick",
+    "googlesyndication",
+    "adservice",
+    "tracker",
+    "metric",
+    "telemetry",
+    "banner",
+    "pixel",
+    "beacon",
+    "affiliate",
+    "sponsor",
+    "promo",
+    "pop",
+    "popup",
+    "redirect",
+    "click",
+    "impression",
+    "stats",
+    "analytics",
+    "score",
+    "cdn-ads",
+    "static-ad",
+    "tag-manager",
 ];
 const AD_MIDS: &[&str] = &[
-    "cdn", "static", "img", "images", "media", "assets", "edge", "origin", "api", "v1", "v2",
-    "v3", "prod", "stage", "eu", "us", "ap", "sa", "node", "cluster", "lb",
+    "cdn", "static", "img", "images", "media", "assets", "edge", "origin", "api", "v1", "v2", "v3",
+    "prod", "stage", "eu", "us", "ap", "sa", "node", "cluster", "lb",
 ];
 const PATH_TAILS: &[&str] = &["/banner.js", "/pixel.png", "/track.gif", "/i.gif", ""];
 
 fn main() {
-    let mut rng = SplitMix64::new(0xC0FFEE_BEEF_C0DE);
+    let mut rng = SplitMix64::new(0x00C0_FFEE_BEEF_C0DE);
     let tmp = std::env::temp_dir();
 
     println!("== cdbgen-rs offline pipeline benchmark ==");
@@ -70,9 +92,17 @@ fn main() {
         eprintln!("[parse/{id:>7}] {:>9.3?}", ts.elapsed());
     }
     let parse_elapsed = t.elapsed();
-    println!("[parse]   {:>9.3?}  blocks={total_blocks} allows={total_allows}", parse_elapsed);
+    println!(
+        "[parse]   {:>9.3?}  blocks={total_blocks} allows={total_allows}",
+        parse_elapsed
+    );
 
-    let group_ids = vec!["hosts".into(), "adblock".into(), "unbound".into(), "rpz".into()];
+    let group_ids = vec![
+        "hosts".into(),
+        "adblock".into(),
+        "unbound".into(),
+        "rpz".into(),
+    ];
     let outputs = vec![OutputConfig {
         group: "merged".into(),
         source_ids: group_ids.clone(),
@@ -123,11 +153,17 @@ fn main() {
         _ => 0,
     };
     assert_eq!(a, b, "shared outputs must agree on domain count");
-    println!("[plan2]   {:>9.3?}  shared={a} (both outputs)", shared_plan_elapsed);
+    println!(
+        "[plan2]   {:>9.3?}  shared={a} (both outputs)",
+        shared_plan_elapsed
+    );
 
     let t = Instant::now();
     for plan in &plans {
-        if let cdbgen_rs::outputs::OutputPlan::Ready { output, domains, .. } = plan {
+        if let cdbgen_rs::outputs::OutputPlan::Ready {
+            output, domains, ..
+        } = plan
+        {
             write_cdb_atomic(&output.path, domains, output.key_format).unwrap();
         }
     }
@@ -136,11 +172,25 @@ fn main() {
         cdbgen_rs::outputs::OutputPlan::Ready { output, .. } => output.path.clone(),
         _ => PathBuf::new(),
     };
-    let size = fs::metadata(&final_path).map(|m| m.len()).unwrap_or_default();
-    println!("[write]   {:>9.3?}  bytes={} ({:.2} MiB)", write_elapsed, size, size as f64 / (1024.0 * 1024.0));
+    let size = fs::metadata(&final_path)
+        .map(|m| m.len())
+        .unwrap_or_default();
+    println!(
+        "[write]   {:>9.3?}  bytes={} ({:.2} MiB)",
+        write_elapsed,
+        size,
+        size as f64 / (1024.0 * 1024.0)
+    );
 
     let inputs: Vec<String> = (0..200_000)
-        .map(|i| format!("{}-{i}.{}.example.{}", AD_TAGS[i % AD_TAGS.len()], AD_MIDS[i % AD_MIDS.len()], HOST_TLDS[i % HOST_TLDS.len()]))
+        .map(|i| {
+            format!(
+                "{}-{i}.{}.example.{}",
+                AD_TAGS[i % AD_TAGS.len()],
+                AD_MIDS[i % AD_MIDS.len()],
+                HOST_TLDS[i % HOST_TLDS.len()]
+            )
+        })
         .collect();
     let t = Instant::now();
     let mut accepted = 0usize;
@@ -150,17 +200,33 @@ fn main() {
         }
     }
     let norm_elapsed = t.elapsed();
-    println!("[norm]    {:>9.3?}  accepted={accepted}/{}", norm_elapsed, inputs.len());
-    println!("[total]   {:>9.3?}", parse_elapsed + plan_elapsed + write_elapsed);
+    println!(
+        "[norm]    {:>9.3?}  accepted={accepted}/{}",
+        norm_elapsed,
+        inputs.len()
+    );
+    println!(
+        "[total]   {:>9.3?}",
+        parse_elapsed + plan_elapsed + write_elapsed
+    );
 }
 
 struct Buf<'a>(&'a mut Vec<u8>);
 impl Write for Buf<'_> {
-    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> { self.0.extend_from_slice(b); Ok(b.len()) }
-    fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+        self.0.extend_from_slice(b);
+        Ok(b.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 impl Buf<'_> {
-    fn writeln(&mut self, s: &str) -> std::io::Result<()> { self.0.extend_from_slice(s.as_bytes()); self.0.push(b'\n'); Ok(()) }
+    fn writeln(&mut self, s: &str) -> std::io::Result<()> {
+        self.0.extend_from_slice(s.as_bytes());
+        self.0.push(b'\n');
+        Ok(())
+    }
 }
 
 fn build_hosts(rng: &mut SplitMix64) -> Vec<u8> {
@@ -168,7 +234,10 @@ fn build_hosts(rng: &mut SplitMix64) -> Vec<u8> {
     let mut out = Buf(&mut buf);
     out.writeln("# hosts blocklist (synthetic)").unwrap();
     for i in 0..HOSTS_LINES {
-        if rng.chance(COMMENT_RATIO) { out.writeln("# comment line").unwrap(); continue; }
+        if rng.chance(COMMENT_RATIO) {
+            out.writeln("# comment line").unwrap();
+            continue;
+        }
         let mid = AD_MIDS[rng.usize(AD_MIDS.len())];
         let tag = AD_TAGS[rng.usize(AD_TAGS.len())];
         let tld = HOST_TLDS[rng.usize(HOST_TLDS.len())];
@@ -186,7 +255,10 @@ fn build_adblock(rng: &mut SplitMix64) -> Vec<u8> {
     let mut out = Buf(&mut buf);
     out.writeln("! uBO-style blocklist (synthetic)").unwrap();
     for i in 0..ADBLOCK_LINES {
-        if rng.chance(COMMENT_RATIO) { out.writeln("! comment").unwrap(); continue; }
+        if rng.chance(COMMENT_RATIO) {
+            out.writeln("! comment").unwrap();
+            continue;
+        }
         let mid = AD_MIDS[rng.usize(AD_MIDS.len())];
         let tag = AD_TAGS[rng.usize(AD_TAGS.len())];
         let tld = HOST_TLDS[rng.usize(HOST_TLDS.len())];
@@ -209,7 +281,11 @@ fn build_unbound(rng: &mut SplitMix64) -> Vec<u8> {
         let mid = AD_MIDS[rng.usize(AD_MIDS.len())];
         let tag = AD_TAGS[rng.usize(AD_TAGS.len())];
         let tld = HOST_TLDS[rng.usize(HOST_TLDS.len())];
-        writeln!(out.0, "local-zone: \"{tag}-{i}.{mid}.example.{tld}.\" always_null").unwrap();
+        writeln!(
+            out.0,
+            "local-zone: \"{tag}-{i}.{mid}.example.{tld}.\" always_null"
+        )
+        .unwrap();
     }
     buf
 }
@@ -218,7 +294,8 @@ fn build_rpz(rng: &mut SplitMix64) -> Vec<u8> {
     let mut buf = Vec::with_capacity(RPZ_LINES * 80);
     let mut out = Buf(&mut buf);
     out.writeln("$TTL 3600").unwrap();
-    out.writeln("@ SOA localhost. root.localhost. 1 14400 3600 86400 3600").unwrap();
+    out.writeln("@ SOA localhost. root.localhost. 1 14400 3600 86400 3600")
+        .unwrap();
     for i in 0..RPZ_LINES {
         let mid = AD_MIDS[rng.usize(AD_MIDS.len())];
         let tag = AD_TAGS[rng.usize(AD_TAGS.len())];
@@ -230,7 +307,9 @@ fn build_rpz(rng: &mut SplitMix64) -> Vec<u8> {
 
 struct SplitMix64(u64);
 impl SplitMix64 {
-    fn new(seed: u64) -> Self { Self(seed) }
+    fn new(seed: u64) -> Self {
+        Self(seed)
+    }
     fn next_u64(&mut self) -> u64 {
         self.0 = self.0.wrapping_add(0x9E3779B97F4A7C15);
         let mut z = self.0;
@@ -238,6 +317,10 @@ impl SplitMix64 {
         z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
         z ^ (z >> 31)
     }
-    fn usize(&mut self, n: usize) -> usize { (self.next_u64() as usize) % n }
-    fn chance(&mut self, p: f64) -> bool { ((self.next_u64() >> 11) as f64 / ((1u64 << 53) as f64)) < p }
+    fn usize(&mut self, n: usize) -> usize {
+        (self.next_u64() as usize) % n
+    }
+    fn chance(&mut self, p: f64) -> bool {
+        ((self.next_u64() >> 11) as f64 / ((1u64 << 53) as f64)) < p
+    }
 }

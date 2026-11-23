@@ -18,23 +18,45 @@ const RPZ_LINES: usize = 40_000;
 const COMMENT_RATIO: f64 = 0.04;
 
 const HOST_TLDS: &[&str] = &[
-    "com", "net", "org", "io", "co", "xyz", "site", "app", "dev", "me", "info", "biz", "us",
-    "ru", "de", "cn", "tk", "ml", "ga", "cf", "pw", "top", "vip", "live", "stream",
+    "com", "net", "org", "io", "co", "xyz", "site", "app", "dev", "me", "info", "biz", "us", "ru",
+    "de", "cn", "tk", "ml", "ga", "cf", "pw", "top", "vip", "live", "stream",
 ];
 const AD_TAGS: &[&str] = &[
-    "ad", "ads", "adsrvr", "doubleclick", "googlesyndication", "adservice", "tracker",
-    "metric", "telemetry", "banner", "pixel", "beacon", "affiliate", "sponsor", "promo",
-    "pop", "popup", "redirect", "click", "impression", "stats", "analytics", "score",
-    "cdn-ads", "static-ad", "tag-manager",
+    "ad",
+    "ads",
+    "adsrvr",
+    "doubleclick",
+    "googlesyndication",
+    "adservice",
+    "tracker",
+    "metric",
+    "telemetry",
+    "banner",
+    "pixel",
+    "beacon",
+    "affiliate",
+    "sponsor",
+    "promo",
+    "pop",
+    "popup",
+    "redirect",
+    "click",
+    "impression",
+    "stats",
+    "analytics",
+    "score",
+    "cdn-ads",
+    "static-ad",
+    "tag-manager",
 ];
 const AD_MIDS: &[&str] = &[
-    "cdn", "static", "img", "images", "media", "assets", "edge", "origin", "api", "v1", "v2",
-    "v3", "prod", "stage", "eu", "us", "ap", "sa", "node", "cluster", "lb",
+    "cdn", "static", "img", "images", "media", "assets", "edge", "origin", "api", "v1", "v2", "v3",
+    "prod", "stage", "eu", "us", "ap", "sa", "node", "cluster", "lb",
 ];
 const PATH_TAILS: &[&str] = &["/banner.js", "/pixel.png", "/track.gif", "/i.gif", ""];
 
 fn main() {
-    let mut rng = SplitMix64::new(0xC0FFEE_BEEF_C0DE);
+    let mut rng = SplitMix64::new(0x00C0_FFEE_BEEF_C0DE);
 
     println!("== parser vector vs btree benchmark ==");
     println!("hosts={HOSTS_LINES} adblock={ADBLOCK_LINES} unbound={UNBOUND_LINES} rpz={RPZ_LINES}");
@@ -47,7 +69,10 @@ fn main() {
         ("rpz", build_rpz(&mut rng)),
     ];
     let total_bytes: usize = bodies.iter().map(|(_, b)| b.len()).sum();
-    println!("input bytes: {:.2} MiB", total_bytes as f64 / (1024.0 * 1024.0));
+    println!(
+        "input bytes: {:.2} MiB",
+        total_bytes as f64 / (1024.0 * 1024.0)
+    );
 
     // ── Baseline: production parser (BTreeSet) ──
     println!("\n--- production: BTreeSet<String> insertion ---");
@@ -60,17 +85,26 @@ fn main() {
         let dt = ts.elapsed();
         baseline_total += dt;
         baseline_blocks_total += parsed.blocks.len();
-        let ns = if parsed.blocks.len() > 0 {
+        let ns = if !parsed.blocks.is_empty() {
             dt.as_nanos() / parsed.blocks.len() as u128
         } else {
             0
         };
-        println!("  {:<8} {:>9.3?}  blocks={:<10} ns/block={}", id, dt, parsed.blocks.len(), ns);
+        println!(
+            "  {:<8} {:>9.3?}  blocks={:<10} ns/block={}",
+            id,
+            dt,
+            parsed.blocks.len(),
+            ns
+        );
     }
     let baseline_mem_after = resident_mib();
-    println!("  TOTAL     {:>9.3?}  blocks={}  resident +{:.1} MiB (after this run)",
-        baseline_total, baseline_blocks_total,
-        (baseline_mem_after as f64) - (baseline_mem_before as f64));
+    println!(
+        "  TOTAL     {:>9.3?}  blocks={}  resident +{:.1} MiB (after this run)",
+        baseline_total,
+        baseline_blocks_total,
+        baseline_mem_after - baseline_mem_before
+    );
 
     // ── Experimental: Vec<String> + sort_unstable + dedup ──
     println!("\n--- experimental: Vec<String> + sort_unstable + dedup ---");
@@ -90,27 +124,39 @@ fn main() {
         exp_sort_total += parsed.t_sort;
         exp_dedup_total += parsed.t_dedup;
         exp_blocks_total += parsed.blocks.len();
-        let ns = if parsed.blocks.len() > 0 {
+        let ns = if !parsed.blocks.is_empty() {
             dt_total.as_nanos() / parsed.blocks.len() as u128
         } else {
             0
         };
         println!(
             "  {:<8} total={:>9.3?}  insert={:>9.3?}  sort={:>9.3?}  dedup={:>9.3?}  blocks={:<10} ns/block={}",
-            id, dt_total, parsed.t_insert, parsed.t_sort, parsed.t_dedup, parsed.blocks.len(), ns
+            id,
+            dt_total,
+            parsed.t_insert,
+            parsed.t_sort,
+            parsed.t_dedup,
+            parsed.blocks.len(),
+            ns
         );
     }
     let exp_mem_after = resident_mib();
-    println!("  TOTAL     {:>9.3?}  blocks={}  resident +{:.1} MiB (after this run)",
-        exp_total, exp_blocks_total,
-        (exp_mem_after as f64) - (exp_mem_before as f64));
+    println!(
+        "  TOTAL     {:>9.3?}  blocks={}  resident +{:.1} MiB (after this run)",
+        exp_total,
+        exp_blocks_total,
+        exp_mem_after - exp_mem_before
+    );
 
     // ── Correctness check (hosts + rpz + unbound only; adblock production
     //    has extra drop-rules that this experimental parser doesn't port) ──
     println!("\n--- correctness (sorted output equal?) ---");
     for (id, body) in &bodies {
         if *id == "adblock" {
-            println!("  {:<8} [skipped: production has format-specific drop rules]", id);
+            println!(
+                "  {:<8} [skipped: production has format-specific drop rules]",
+                id
+            );
             continue;
         }
         let baseline = cdbgen_rs::parser::parse_source_bytes(body);
@@ -118,8 +164,13 @@ fn main() {
         let a: BTreeSet<&str> = baseline.blocks.iter().map(String::as_str).collect();
         let b: BTreeSet<&str> = experimental.blocks.iter().map(String::as_str).collect();
         let same = a == b;
-        println!("  {:<8} baseline={:<10} experimental={:<10} equal={}",
-            id, baseline.blocks.len(), experimental.blocks.len(), same);
+        println!(
+            "  {:<8} baseline={:<10} experimental={:<10} equal={}",
+            id,
+            baseline.blocks.len(),
+            experimental.blocks.len(),
+            same
+        );
         assert!(same, "mismatch for {id}");
     }
 
@@ -134,32 +185,42 @@ fn main() {
     let t = Instant::now();
     let mut parsed_prod: BTreeMap<String, cdbgen_rs::parser::ParsedSource> = BTreeMap::new();
     for (id, body) in &bodies {
-        parsed_prod.insert((*id).to_string(), cdbgen_rs::parser::parse_source_bytes(body));
+        parsed_prod.insert(
+            (*id).to_string(),
+            cdbgen_rs::parser::parse_source_bytes(body),
+        );
     }
     let parse_prod_dt = t.elapsed();
     let outputs = vec![cdbgen_rs::config::OutputConfig {
         group: "merged".into(),
-        source_ids: vec!["hosts".into(), "adblock".into(), "unbound".into(), "rpz".into()],
+        source_ids: vec![
+            "hosts".into(),
+            "adblock".into(),
+            "unbound".into(),
+            "rpz".into(),
+        ],
         path: tmp.join("prod.cdb"),
         key_format: cdbgen_rs::config::OutputKeyFormat::Wire,
     }];
     let t = Instant::now();
-    let plans = cdbgen_rs::outputs::build_output_domains(
-        &outputs,
-        parsed_prod,
-        &BTreeSet::new(),
-    );
+    let plans = cdbgen_rs::outputs::build_output_domains(&outputs, parsed_prod, &BTreeSet::new());
     let plan_prod_dt = t.elapsed();
     let t = Instant::now();
     for plan in &plans {
-        if let cdbgen_rs::outputs::OutputPlan::Ready { output, domains, .. } = plan {
-            cdbgen_rs::cdb_writer::write_cdb_atomic(&output.path, domains, output.key_format).unwrap();
+        if let cdbgen_rs::outputs::OutputPlan::Ready {
+            output, domains, ..
+        } = plan
+        {
+            cdbgen_rs::cdb_writer::write_cdb_atomic(&output.path, domains, output.key_format)
+                .unwrap();
         }
     }
     let write_prod_dt = t.elapsed();
     let total_prod = parse_prod_dt + plan_prod_dt + write_prod_dt;
-    println!("  production   parse={:>9.3?}  plan={:>9.3?}  write={:>9.3?}  TOTAL={:?}",
-        parse_prod_dt, plan_prod_dt, write_prod_dt, total_prod);
+    println!(
+        "  production   parse={:>9.3?}  plan={:>9.3?}  write={:>9.3?}  TOTAL={:?}",
+        parse_prod_dt, plan_prod_dt, write_prod_dt, total_prod
+    );
 
     // Experimental pipeline.
     let t = Instant::now();
@@ -171,7 +232,9 @@ fn main() {
         // output pipeline. Dedup is already done in the Vec so from_iter is
         // n unique inserts.
         let mut blocks = Vec::new();
-        for s in exp.blocks { blocks.push(s); }
+        for s in exp.blocks {
+            blocks.push(s);
+        }
         parsed_exp.insert(
             (*id).to_string(),
             cdbgen_rs::parser::ParsedSource {
@@ -185,31 +248,42 @@ fn main() {
     let parse_exp_dt = t.elapsed();
     let outputs2 = vec![cdbgen_rs::config::OutputConfig {
         group: "merged".into(),
-        source_ids: vec!["hosts".into(), "adblock".into(), "unbound".into(), "rpz".into()],
+        source_ids: vec![
+            "hosts".into(),
+            "adblock".into(),
+            "unbound".into(),
+            "rpz".into(),
+        ],
         path: tmp.join("exp.cdb"),
         key_format: cdbgen_rs::config::OutputKeyFormat::Wire,
     }];
     let t = Instant::now();
-    let plans2 = cdbgen_rs::outputs::build_output_domains(
-        &outputs2,
-        parsed_exp,
-        &BTreeSet::new(),
-    );
+    let plans2 = cdbgen_rs::outputs::build_output_domains(&outputs2, parsed_exp, &BTreeSet::new());
     let plan_exp_dt = t.elapsed();
     let t = Instant::now();
     for plan in &plans2 {
-        if let cdbgen_rs::outputs::OutputPlan::Ready { output, domains, .. } = plan {
-            cdbgen_rs::cdb_writer::write_cdb_atomic(&output.path, domains, output.key_format).unwrap();
+        if let cdbgen_rs::outputs::OutputPlan::Ready {
+            output, domains, ..
+        } = plan
+        {
+            cdbgen_rs::cdb_writer::write_cdb_atomic(&output.path, domains, output.key_format)
+                .unwrap();
         }
     }
     let write_exp_dt = t.elapsed();
     let total_exp = parse_exp_dt + plan_exp_dt + write_exp_dt;
-    println!("  experimental parse={:>9.3?}  plan={:>9.3?}  write={:>9.3?}  TOTAL={:?}",
-        parse_exp_dt, plan_exp_dt, write_exp_dt, total_exp);
+    println!(
+        "  experimental parse={:>9.3?}  plan={:>9.3?}  write={:>9.3?}  TOTAL={:?}",
+        parse_exp_dt, plan_exp_dt, write_exp_dt, total_exp
+    );
 
     let saved = total_prod.saturating_sub(total_exp);
     let speedup = total_prod.as_secs_f64() / total_exp.as_secs_f64();
-    println!("  pipeline speedup = {:.2}x  saved = {} ms", speedup, saved.as_millis());
+    println!(
+        "  pipeline speedup = {:.2}x  saved = {} ms",
+        speedup,
+        saved.as_millis()
+    );
 
     // ── Summary ──
     let speedup = baseline_total.as_secs_f64() / exp_total.as_secs_f64();
@@ -218,8 +292,14 @@ fn main() {
     println!("baseline   parse_total = {:>9.3?}", baseline_total);
     println!("experimental parse_total = {:>9.3?}", exp_total);
     println!("speedup = {:.2}x  saved = {} ms", speedup, saved_ms);
-    println!("baseline   ns/block = {}", baseline_total.as_nanos() / baseline_blocks_total as u128);
-    println!("experimental ns/block = {}", exp_total.as_nanos() / exp_blocks_total as u128);
+    println!(
+        "baseline   ns/block = {}",
+        baseline_total.as_nanos() / baseline_blocks_total as u128
+    );
+    println!(
+        "experimental ns/block = {}",
+        exp_total.as_nanos() / exp_blocks_total as u128
+    );
 }
 
 // ─── experimental parser ───
@@ -274,10 +354,7 @@ fn fast_normalize(s: &str) -> Option<&str> {
 
 #[inline]
 fn is_valid_label(bytes: &[u8], start: usize, len: usize) -> bool {
-    len >= 1
-        && len <= 63
-        && bytes[start] != b'-'
-        && bytes[start + len - 1] != b'-'
+    (1..=63).contains(&len) && bytes[start] != b'-' && bytes[start + len - 1] != b'-'
 }
 
 /// Strip an `0.0.0.0 ` / `127.0.0.1 ` prefix or take the whole trimmed line
@@ -308,7 +385,7 @@ fn extract_host_domain(line: &str) -> Option<&str> {
     // adblock: "||example.com^" or "||example.com^$third-party" or "||example.com/path^"
     if let Some(rest) = s.strip_prefix("||") {
         // Cut at first ^ / $ / / (path) — same rule production uses.
-        let end = rest.find(|c: char| c == '^' || c == '$' || c == '/').unwrap_or(rest.len());
+        let end = rest.find(['^', '$', '/']).unwrap_or(rest.len());
         return Some(&rest[..end]);
     }
     // rpz: "example.com CNAME ."
@@ -328,10 +405,10 @@ fn parse_vec_experimental(body: &[u8]) -> ExperimentalParsed {
         if line.is_empty() || line.starts_with('#') || line.starts_with('!') {
             continue;
         }
-        if let Some(d) = extract_host_domain(line) {
-            if let Some(norm) = fast_normalize(d) {
-                blocks.push(norm.to_string());
-            }
+        if let Some(d) = extract_host_domain(line)
+            && let Some(norm) = fast_normalize(d)
+        {
+            blocks.push(norm.to_string());
         }
     }
     let t_insert = t_insert.elapsed();
@@ -344,14 +421,23 @@ fn parse_vec_experimental(body: &[u8]) -> ExperimentalParsed {
     blocks.dedup();
     let t_dedup = t_dedup.elapsed();
 
-    ExperimentalParsed { blocks, t_insert, t_sort, t_dedup }
+    ExperimentalParsed {
+        blocks,
+        t_insert,
+        t_sort,
+        t_dedup,
+    }
 }
 
 // ─── generators (copy of parse_bench) ───
 
-struct SplitMix64 { state: u64 }
+struct SplitMix64 {
+    state: u64,
+}
 impl SplitMix64 {
-    fn new(seed: u64) -> Self { Self { state: seed } }
+    fn new(seed: u64) -> Self {
+        Self { state: seed }
+    }
     fn next_u64(&mut self) -> u64 {
         self.state = self.state.wrapping_add(0x9E3779B97F4A7C15);
         let mut z = self.state;
@@ -359,7 +445,9 @@ impl SplitMix64 {
         z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
         z ^ (z >> 31)
     }
-    fn pick<'a, T>(&mut self, items: &'a [T]) -> &'a T { &items[(self.next_u64() as usize) % items.len()] }
+    fn pick<'a, T>(&mut self, items: &'a [T]) -> &'a T {
+        &items[(self.next_u64() as usize) % items.len()]
+    }
     fn chance(&mut self, p: f64) -> bool {
         (self.next_u64() as f64 / u64::MAX as f64) < p
     }
@@ -367,8 +455,13 @@ impl SplitMix64 {
 
 struct Buf<'a>(&'a mut Vec<u8>);
 impl<'a> Write for Buf<'a> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> { self.0.extend_from_slice(buf); Ok(buf.len()) }
-    fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 fn build_hosts(rng: &mut SplitMix64) -> Vec<u8> {
@@ -436,7 +529,11 @@ fn resident_mib() -> f64 {
     let s = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
     for line in s.lines() {
         if let Some(rest) = line.strip_prefix("VmRSS:") {
-            let kb: u64 = rest.split_whitespace().next().and_then(|x| x.parse().ok()).unwrap_or(0);
+            let kb: u64 = rest
+                .split_whitespace()
+                .next()
+                .and_then(|x| x.parse().ok())
+                .unwrap_or(0);
             return kb as f64 / 1024.0;
         }
     }

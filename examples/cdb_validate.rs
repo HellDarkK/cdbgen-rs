@@ -6,11 +6,7 @@
 //
 // Usage: cargo run --release --example cdb_validate
 
-use std::{
-    collections::BTreeMap,
-    fs,
-    io::Write,
-};
+use std::{collections::BTreeMap, fs, io::Write};
 
 use cdbgen_rs::{
     cdb_writer::domain_to_wire,
@@ -25,18 +21,26 @@ const UNBOUND_LINES: usize = 10_000;
 const RPZ_LINES: usize = 5_000;
 const COMMENT_RATIO: f64 = 0.04;
 
-const HOST_TLDS: &[&str] = &[
-    "com", "net", "org", "io", "co", "xyz", "site", "app", "dev",
-];
+const HOST_TLDS: &[&str] = &["com", "net", "org", "io", "co", "xyz", "site", "app", "dev"];
 const AD_TAGS: &[&str] = &[
-    "ad", "ads", "adsrvr", "doubleclick", "tracker", "metric", "telemetry",
-    "banner", "pixel", "beacon", "stats", "analytics",
+    "ad",
+    "ads",
+    "adsrvr",
+    "doubleclick",
+    "tracker",
+    "metric",
+    "telemetry",
+    "banner",
+    "pixel",
+    "beacon",
+    "stats",
+    "analytics",
 ];
 const AD_MIDS: &[&str] = &["cdn", "static", "img", "v1", "v2", "eu", "us"];
 const PATH_TAILS: &[&str] = &["/banner.js", "/pixel.png", "/track.gif", ""];
 
 fn main() {
-    let mut rng = SplitMix64::new(0xC0FFEE_BEEF_C0DE);
+    let mut rng = SplitMix64::new(0x00C0_FFEE_BEEF_C0DE);
     let tmp = std::env::temp_dir();
 
     println!("== cdbgen-rs CDB validity check ==");
@@ -112,7 +116,7 @@ fn main() {
         blocks.dedup();
         allows.sort_unstable();
         allows.dedup();
-        blocks.retain(|d| !allows.binary_search(d).is_ok());
+        blocks.retain(|d| allows.binary_search(d).is_err());
         blocks
     };
     assert!(!expected.is_empty(), "expected non-empty domain set");
@@ -120,7 +124,11 @@ fn main() {
 
     // ── Wire-format CDB ──
     let wire_size = fs::metadata(&wire_path).unwrap().len();
-    println!("\n[wire]   {} bytes  path={}", wire_size, wire_path.display());
+    println!(
+        "\n[wire]   {} bytes  path={}",
+        wire_size,
+        wire_path.display()
+    );
     let wire_db = cdb::CDB::open(&wire_path).expect("open wire CDB");
     let mut wire_hits = 0usize;
     let mut wire_misses: Vec<&str> = Vec::new();
@@ -132,17 +140,33 @@ fn main() {
         }
     }
     println!("[wire]   hits={} misses={}", wire_hits, wire_misses.len());
-    assert_eq!(wire_misses.len(), 0, "wire: missed keys: {:?}", &wire_misses[..wire_misses.len().min(5)]);
-    assert_eq!(wire_hits, expected.len(), "wire: every expected domain must be present");
+    assert_eq!(
+        wire_misses.len(),
+        0,
+        "wire: missed keys: {:?}",
+        &wire_misses[..wire_misses.len().min(5)]
+    );
+    assert_eq!(
+        wire_hits,
+        expected.len(),
+        "wire: every expected domain must be present"
+    );
 
     // Negative check: a domain we did not generate must not be present.
     let absent_key = domain_to_wire("definitely-not-in-the-test.example").unwrap();
-    assert!(wire_db.get(&absent_key).is_none(), "wire: spurious lookup returned a value");
+    assert!(
+        wire_db.get(&absent_key).is_none(),
+        "wire: spurious lookup returned a value"
+    );
     println!("[wire]   negative lookup confirmed absent");
 
     // ── Plaintext-format CDB ──
     let plain_size = fs::metadata(&plaintext_path).unwrap().len();
-    println!("\n[plain]  {} bytes  path={}", plain_size, plaintext_path.display());
+    println!(
+        "\n[plain]  {} bytes  path={}",
+        plain_size,
+        plaintext_path.display()
+    );
     let plain_db = cdb::CDB::open(&plaintext_path).expect("open plaintext CDB");
     let mut plain_hits = 0usize;
     let mut plain_misses: Vec<&str> = Vec::new();
@@ -153,12 +177,23 @@ fn main() {
         }
     }
     println!("[plain]  hits={} misses={}", plain_hits, plain_misses.len());
-    assert_eq!(plain_misses.len(), 0, "plaintext: missed keys: {:?}", &plain_misses[..plain_misses.len().min(5)]);
-    assert_eq!(plain_hits, expected.len(), "plaintext: every expected domain must be present");
+    assert_eq!(
+        plain_misses.len(),
+        0,
+        "plaintext: missed keys: {:?}",
+        &plain_misses[..plain_misses.len().min(5)]
+    );
+    assert_eq!(
+        plain_hits,
+        expected.len(),
+        "plaintext: every expected domain must be present"
+    );
 
     // Negative check.
     assert!(
-        plain_db.get(b"definitely-not-in-the-test.example").is_none(),
+        plain_db
+            .get(b"definitely-not-in-the-test.example")
+            .is_none(),
         "plaintext: spurious lookup returned a value"
     );
     println!("[plain]  negative lookup confirmed absent");
@@ -167,9 +202,12 @@ fn main() {
     let ready = plans
         .iter()
         .find_map(|p| match p {
-            OutputPlan::Ready { domains, blocks_before_allow, allows, .. } => {
-                Some((domains.len(), *blocks_before_allow, *allows))
-            }
+            OutputPlan::Ready {
+                domains,
+                blocks_before_allow,
+                allows,
+                ..
+            } => Some((domains.len(), *blocks_before_allow, *allows)),
             _ => None,
         })
         .expect("at least one ready plan");
@@ -186,8 +224,13 @@ fn main() {
 
 struct Buf<'a>(&'a mut Vec<u8>);
 impl Write for Buf<'_> {
-    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> { self.0.extend_from_slice(b); Ok(b.len()) }
-    fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+        self.0.extend_from_slice(b);
+        Ok(b.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 fn build_hosts(rng: &mut SplitMix64) -> Vec<u8> {
@@ -195,7 +238,10 @@ fn build_hosts(rng: &mut SplitMix64) -> Vec<u8> {
     let mut w = Buf(&mut buf);
     writeln!(w, "# hosts blocklist (synthetic)").unwrap();
     for i in 0..HOSTS_LINES {
-        if rng.chance(COMMENT_RATIO) { writeln!(w, "# comment {i}").unwrap(); continue; }
+        if rng.chance(COMMENT_RATIO) {
+            writeln!(w, "# comment {i}").unwrap();
+            continue;
+        }
         let tld = rng.pick(HOST_TLDS);
         let tag = rng.pick(AD_TAGS);
         let mid = rng.pick(AD_MIDS);
@@ -212,7 +258,10 @@ fn build_adblock(rng: &mut SplitMix64) -> Vec<u8> {
     let mut w = Buf(&mut buf);
     writeln!(w, "! uBO-style blocklist (synthetic)").unwrap();
     for i in 0..ADBLOCK_LINES {
-        if rng.chance(COMMENT_RATIO) { writeln!(w, "! comment {i}").unwrap(); continue; }
+        if rng.chance(COMMENT_RATIO) {
+            writeln!(w, "! comment {i}").unwrap();
+            continue;
+        }
         let tld = rng.pick(HOST_TLDS);
         let tag = rng.pick(AD_TAGS);
         let mid = rng.pick(AD_MIDS);
@@ -234,7 +283,11 @@ fn build_unbound(rng: &mut SplitMix64) -> Vec<u8> {
         let tld = rng.pick(HOST_TLDS);
         let tag = rng.pick(AD_TAGS);
         let mid = rng.pick(AD_MIDS);
-        writeln!(w, "local-zone: \"{tag}-{i}.{mid}.example.{tld}.\" always_null").unwrap();
+        writeln!(
+            w,
+            "local-zone: \"{tag}-{i}.{mid}.example.{tld}.\" always_null"
+        )
+        .unwrap();
     }
     buf
 }
@@ -242,7 +295,11 @@ fn build_rpz(rng: &mut SplitMix64) -> Vec<u8> {
     let mut buf = Vec::with_capacity(RPZ_LINES * 32);
     let mut w = Buf(&mut buf);
     writeln!(w, "$TTL 3600").unwrap();
-    writeln!(w, "@ SOA localhost. root.localhost. 1 14400 3600 86400 3600").unwrap();
+    writeln!(
+        w,
+        "@ SOA localhost. root.localhost. 1 14400 3600 86400 3600"
+    )
+    .unwrap();
     for i in 0..RPZ_LINES {
         let tld = rng.pick(HOST_TLDS);
         let tag = rng.pick(AD_TAGS);
@@ -254,7 +311,9 @@ fn build_rpz(rng: &mut SplitMix64) -> Vec<u8> {
 
 struct SplitMix64(u64);
 impl SplitMix64 {
-    fn new(seed: u64) -> Self { Self(seed) }
+    fn new(seed: u64) -> Self {
+        Self(seed)
+    }
     fn next_u64(&mut self) -> u64 {
         self.0 = self.0.wrapping_add(0x9E3779B97F4A7C15);
         let mut z = self.0;
@@ -262,7 +321,13 @@ impl SplitMix64 {
         z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
         z ^ (z >> 31)
     }
-    fn usize(&mut self, n: usize) -> usize { (self.next_u64() as usize) % n }
-    fn pick<'a, T>(&mut self, items: &'a [T]) -> &'a T { &items[(self.next_u64() as usize) % items.len()] }
-    fn chance(&mut self, p: f64) -> bool { ((self.next_u64() >> 11) as f64 / ((1u64 << 53) as f64)) < p }
+    fn usize(&mut self, n: usize) -> usize {
+        (self.next_u64() as usize) % n
+    }
+    fn pick<'a, T>(&mut self, items: &'a [T]) -> &'a T {
+        &items[(self.next_u64() as usize) % items.len()]
+    }
+    fn chance(&mut self, p: f64) -> bool {
+        ((self.next_u64() >> 11) as f64 / ((1u64 << 53) as f64)) < p
+    }
 }

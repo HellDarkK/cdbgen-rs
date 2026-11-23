@@ -319,7 +319,10 @@ fn looks_like_rpz_preamble(line: &str) -> bool {
     }
 
     tokens.get(0).is_some_and(|t| t.starts_with('$'))
-        || tokens.iter().skip(1).any(|token| is_dns_class(token) || is_dns_record_type(token))
+        || tokens
+            .iter()
+            .skip(1)
+            .any(|token| is_dns_class(token) || is_dns_record_type(token))
 }
 
 fn extract_hosts_line_with(tokens: &Tokens<'_>) -> Option<Vec<String>> {
@@ -373,7 +376,7 @@ impl<'a> Tokens<'a> {
         let mut i = 0;
         while i < bytes.len() {
             // Skip leading whitespace.
-            while i < bytes.len() && (bytes[i] as u8).is_ascii_whitespace() {
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
                 i += 1;
             }
             if i >= bytes.len() {
@@ -381,7 +384,7 @@ impl<'a> Tokens<'a> {
             }
             let start = i;
             // Find end of token.
-            while i < bytes.len() && !(bytes[i] as u8).is_ascii_whitespace() {
+            while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
                 i += 1;
             }
             let end = i;
@@ -393,11 +396,18 @@ impl<'a> Tokens<'a> {
                 inline[inline_len as usize] = (start, end);
                 inline_len += 1;
             } else {
-                overflow.get_or_insert_with(|| Vec::with_capacity(8)).push((start, end));
+                overflow
+                    .get_or_insert_with(|| Vec::with_capacity(8))
+                    .push((start, end));
             }
         }
 
-        Self { src: line, inline, inline_len, overflow }
+        Self {
+            src: line,
+            inline,
+            inline_len,
+            overflow,
+        }
     }
 
     fn is_empty(&self) -> bool {
@@ -415,16 +425,23 @@ impl<'a> Tokens<'a> {
             return Some(&self.src[s..e]);
         }
         let ov = self.overflow.as_ref()?;
-        ov.get(i - self.inline_len as usize).map(|(s, e)| &self.src[*s..*e])
+        ov.get(i - self.inline_len as usize)
+            .map(|(s, e)| &self.src[*s..*e])
     }
 
     fn iter(&self) -> impl Iterator<Item = &'a str> + '_ {
         let n = self.inline_len as usize;
-        (0..n).map(move |i| {
-            let (s, e) = self.inline[i];
-            &self.src[s..e]
-        })
-        .chain(self.overflow.iter().flatten().map(move |(s, e)| &self.src[*s..*e]))
+        (0..n)
+            .map(move |i| {
+                let (s, e) = self.inline[i];
+                &self.src[s..e]
+            })
+            .chain(
+                self.overflow
+                    .iter()
+                    .flatten()
+                    .map(move |(s, e)| &self.src[*s..*e]),
+            )
     }
 }
 

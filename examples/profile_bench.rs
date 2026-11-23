@@ -13,11 +13,11 @@ use std::{
     time::Instant,
 };
 
+use cdbgen_rs::normalize::normalize_domain;
 use cdbgen_rs::{
     cdb_writer::write_cdb_atomic, config::OutputConfig, config::OutputKeyFormat,
     outputs::build_output_domains, parser::parse_source_bytes,
 };
-use cdbgen_rs::normalize::normalize_domain;
 
 const HOSTS_LINES: usize = 1_500_000;
 const ADBLOCK_LINES: usize = 600_000;
@@ -26,18 +26,40 @@ const RPZ_LINES: usize = 40_000;
 const COMMENT_RATIO: f64 = 0.04;
 
 const HOST_TLDS: &[&str] = &[
-    "com", "net", "org", "io", "co", "xyz", "site", "app", "dev", "me", "info", "biz", "us",
-    "ru", "de", "cn", "tk", "ml", "ga", "cf", "pw", "top", "vip", "live", "stream",
+    "com", "net", "org", "io", "co", "xyz", "site", "app", "dev", "me", "info", "biz", "us", "ru",
+    "de", "cn", "tk", "ml", "ga", "cf", "pw", "top", "vip", "live", "stream",
 ];
 const AD_TAGS: &[&str] = &[
-    "ad", "ads", "adsrvr", "doubleclick", "googlesyndication", "adservice", "tracker",
-    "metric", "telemetry", "banner", "pixel", "beacon", "affiliate", "sponsor", "promo",
-    "pop", "popup", "redirect", "click", "impression", "stats", "analytics", "score",
-    "cdn-ads", "static-ad", "tag-manager",
+    "ad",
+    "ads",
+    "adsrvr",
+    "doubleclick",
+    "googlesyndication",
+    "adservice",
+    "tracker",
+    "metric",
+    "telemetry",
+    "banner",
+    "pixel",
+    "beacon",
+    "affiliate",
+    "sponsor",
+    "promo",
+    "pop",
+    "popup",
+    "redirect",
+    "click",
+    "impression",
+    "stats",
+    "analytics",
+    "score",
+    "cdn-ads",
+    "static-ad",
+    "tag-manager",
 ];
 const AD_MIDS: &[&str] = &[
-    "cdn", "static", "img", "images", "media", "assets", "edge", "origin", "api", "v1", "v2",
-    "v3", "prod", "stage", "eu", "us", "ap", "sa", "node", "cluster", "lb",
+    "cdn", "static", "img", "images", "media", "assets", "edge", "origin", "api", "v1", "v2", "v3",
+    "prod", "stage", "eu", "us", "ap", "sa", "node", "cluster", "lb",
 ];
 const PATH_TAILS: &[&str] = &["/banner.js", "/pixel.png", "/track.gif", "/i.gif", ""];
 
@@ -46,8 +68,6 @@ struct Phase {
     name: &'static str,
     total: std::time::Duration,
     count: usize,
-    bytes_in: usize,
-    bytes_out: usize,
 }
 
 impl Phase {
@@ -69,7 +89,7 @@ impl Phase {
 }
 
 fn main() {
-    let mut rng = SplitMix64::new(0xC0FFEE_BEEF_C0DE);
+    let mut rng = SplitMix64::new(0x00C0_FFEE_BEEF_C0DE);
     let tmp = std::env::temp_dir();
 
     println!("== cdbgen-rs profile ==");
@@ -84,12 +104,19 @@ fn main() {
     bodies.insert("rpz".into(), build_rpz(&mut rng));
     let total_bytes: usize = bodies.values().map(|v| v.len()).sum();
     let gen_elapsed = t.elapsed();
-    println!("\n[gen]    {:>9.3?}  bytes={:.2} MiB",
-        gen_elapsed, total_bytes as f64 / (1024.0 * 1024.0));
+    println!(
+        "\n[gen]    {:>9.3?}  bytes={:.2} MiB",
+        gen_elapsed,
+        total_bytes as f64 / (1024.0 * 1024.0)
+    );
 
     // ── parse ──
-    let mut p_parse = Phase { name: "parse_source_bytes", ..Default::default() };
-    let mut per_source: std::collections::BTreeMap<&str, (std::time::Duration, usize, usize)> = std::collections::BTreeMap::new();
+    let mut p_parse = Phase {
+        name: "parse_source_bytes",
+        ..Default::default()
+    };
+    let mut per_source: std::collections::BTreeMap<&str, (std::time::Duration, usize, usize)> =
+        std::collections::BTreeMap::new();
     let mut parsed: BTreeMap<String, cdbgen_rs::parser::ParsedSource> = BTreeMap::new();
     let mut total_blocks = 0usize;
     let mut total_allows = 0usize;
@@ -109,12 +136,19 @@ fn main() {
     println!("  {:<28} {:>10}  ns/block", " ", per_block_ns);
     println!("  per-source breakdown:");
     for (id, (dt, blocks, allows)) in &per_source {
-        let ns_per_line = dt.as_nanos() / (HOSTS_LINES + ADBLOCK_LINES + UNBOUND_LINES + RPZ_LINES) as u128;
-        println!("    {:<8} {:>9.3?}  blocks={:<10} allows={}", id, dt, blocks, allows);
+        println!(
+            "    {:<8} {:>9.3?}  blocks={:<10} allows={}",
+            id, dt, blocks, allows
+        );
     }
 
     // ── plan (1 output) ──
-    let group_ids = vec!["hosts".into(), "adblock".into(), "unbound".into(), "rpz".into()];
+    let group_ids = vec![
+        "hosts".into(),
+        "adblock".into(),
+        "unbound".into(),
+        "rpz".into(),
+    ];
     let outputs = vec![OutputConfig {
         group: "merged".into(),
         source_ids: group_ids.clone(),
@@ -122,8 +156,14 @@ fn main() {
         key_format: OutputKeyFormat::Wire,
     }];
     let unavailable = BTreeSet::new();
-    let mut p_plan1 = Phase { name: "build_output_domains x1", ..Default::default() };
-    let mut p_plan1_clone = Phase { name: "  (incl BTreeSet clone)", ..Default::default() };
+    let mut p_plan1 = Phase {
+        name: "build_output_domains x1",
+        ..Default::default()
+    };
+    let mut p_plan1_clone = Phase {
+        name: "  (incl BTreeSet clone)",
+        ..Default::default()
+    };
 
     // Build a fresh copy of parsed so we can measure plan twice.
     let mut p1_parsed: BTreeMap<String, cdbgen_rs::parser::ParsedSource> = BTreeMap::new();
@@ -180,10 +220,16 @@ fn main() {
 
     // ── write ──
     let t_write = Instant::now();
-    let mut p_write = Phase { name: "write_cdb_atomic", ..Default::default() };
+    let mut p_write = Phase {
+        name: "write_cdb_atomic",
+        ..Default::default()
+    };
     let mut bytes_written = 0usize;
     for plan in &shared_plans {
-        if let cdbgen_rs::outputs::OutputPlan::Ready { output, domains, .. } = plan {
+        if let cdbgen_rs::outputs::OutputPlan::Ready {
+            output, domains, ..
+        } = plan
+        {
             let ts = Instant::now();
             write_cdb_atomic(&output.path, domains, output.key_format).unwrap();
             let dt = ts.elapsed();
@@ -192,15 +238,28 @@ fn main() {
         }
     }
     let write_wall = t_write.elapsed();
-    println!("\n[write]   bytes={:.2} MiB", bytes_written as f64 / (1024.0 * 1024.0));
+    println!(
+        "\n[write]   bytes={:.2} MiB",
+        bytes_written as f64 / (1024.0 * 1024.0)
+    );
     p_write.report();
     println!("  wall (incl fsync)      {:>10.3?}", write_wall);
 
     // ── normalize micro ──
     let inputs: Vec<String> = (0..200_000)
-        .map(|i| format!("{}-{i}.{}.example.{}", AD_TAGS[i % AD_TAGS.len()], AD_MIDS[i % AD_MIDS.len()], HOST_TLDS[i % HOST_TLDS.len()]))
+        .map(|i| {
+            format!(
+                "{}-{i}.{}.example.{}",
+                AD_TAGS[i % AD_TAGS.len()],
+                AD_MIDS[i % AD_MIDS.len()],
+                HOST_TLDS[i % HOST_TLDS.len()]
+            )
+        })
         .collect();
-    let mut p_norm = Phase { name: "normalize_domain", ..Default::default() };
+    let mut p_norm = Phase {
+        name: "normalize_domain",
+        ..Default::default()
+    };
     let ts = Instant::now();
     let mut accepted = 0usize;
     for s in &inputs {
@@ -215,19 +274,25 @@ fn main() {
 
     // ── summary ──
     let pipeline_wall = p_parse.total + plan1_dt + plan2_dt + write_wall;
-    println!("\n[summary] pipeline (parse+plan1+plan2+write) = {:>9.3?}", pipeline_wall);
-    let pct = |dt: std::time::Duration| -> f64 {
-        100.0 * dt.as_secs_f64() / pipeline_wall.as_secs_f64()
-    };
+    println!(
+        "\n[summary] pipeline (parse+plan1+plan2+write) = {:>9.3?}",
+        pipeline_wall
+    );
+    let pct =
+        |dt: std::time::Duration| -> f64 { 100.0 * dt.as_secs_f64() / pipeline_wall.as_secs_f64() };
     println!("  parse:   {:>6.2}%", pct(p_parse.total));
     println!("  plan x1: {:>6.2}%", pct(plan1_dt));
     println!("  plan x2: {:>6.2}%", pct(plan2_dt));
     println!("  write:   {:>6.2}%", pct(write_wall));
 }
 
-struct SplitMix64 { state: u64 }
+struct SplitMix64 {
+    state: u64,
+}
 impl SplitMix64 {
-    fn new(seed: u64) -> Self { Self { state: seed } }
+    fn new(seed: u64) -> Self {
+        Self { state: seed }
+    }
     fn next_u64(&mut self) -> u64 {
         self.state = self.state.wrapping_add(0x9E3779B97F4A7C15);
         let mut z = self.state;
@@ -235,7 +300,9 @@ impl SplitMix64 {
         z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
         z ^ (z >> 31)
     }
-    fn pick<'a, T>(&mut self, items: &'a [T]) -> &'a T { &items[(self.next_u64() as usize) % items.len()] }
+    fn pick<'a, T>(&mut self, items: &'a [T]) -> &'a T {
+        &items[(self.next_u64() as usize) % items.len()]
+    }
     fn chance(&mut self, p: f64) -> bool {
         (self.next_u64() as f64 / u64::MAX as f64) < p
     }
@@ -243,8 +310,13 @@ impl SplitMix64 {
 
 struct Buf<'a>(&'a mut Vec<u8>);
 impl<'a> Write for Buf<'a> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> { self.0.extend_from_slice(buf); Ok(buf.len()) }
-    fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 fn build_hosts(rng: &mut SplitMix64) -> Vec<u8> {
