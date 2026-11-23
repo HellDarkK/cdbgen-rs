@@ -10,7 +10,7 @@ Release assets are uploaded as the binary itself plus a `.sha256` file. After
 downloading it, make it executable:
 
 ```bash
-chmod +x cdbgen-rs-v0.1.4-x86_64-unknown-linux-musl
+chmod +x cdbgen-rs-v0.1.6-x86_64-unknown-linux-musl
 ```
 
 ## Build From Source
