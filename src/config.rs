@@ -38,10 +38,16 @@ pub struct Config {
     pub outputs: Vec<OutputConfig>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SourceLocation {
+    Http(Url),
+    File(PathBuf),
+}
+
 #[derive(Debug, Clone)]
 pub struct SourceConfig {
     pub id: String,
-    pub url: Url,
+    pub location: SourceLocation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,10 +89,14 @@ impl Config {
             path: path.to_path_buf(),
             source,
         })?;
-        Self::from_raw(raw)
+        let config_dir = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        Self::from_raw(raw, config_dir)
     }
 
-    fn from_raw(raw: RawConfig) -> Result<Self, ConfigError> {
+    fn from_raw(raw: RawConfig, config_dir: &Path) -> Result<Self, ConfigError> {
         let raw_sources = raw.sources.ok_or(ConfigError::EmptySources)?;
         let raw_outputs = raw.outputs.ok_or(ConfigError::EmptyOutputs)?;
 
@@ -98,27 +108,13 @@ impl Config {
         }
 
         let mut sources = BTreeMap::new();
-        for (id, url) in raw_sources {
+        for (id, value) in raw_sources {
             if !is_valid_source_id(&id) {
                 return Err(ConfigError::InvalidSourceId(id));
             }
 
-            let parsed = Url::parse(&url).map_err(|_| ConfigError::InvalidUrl {
-                source_id: id.clone(),
-                url: url.clone(),
-            })?;
-
-            match parsed.scheme() {
-                "http" | "https" => {}
-                scheme => {
-                    return Err(ConfigError::UnsupportedScheme {
-                        source_id: id.clone(),
-                        scheme: scheme.to_owned(),
-                    });
-                }
-            }
-
-            sources.insert(id.clone(), SourceConfig { id, url: parsed });
+            let location = parse_source_location(&id, &value, config_dir)?;
+            sources.insert(id.clone(), SourceConfig { id, location });
         }
 
         let mut outputs = Vec::new();
@@ -233,6 +229,53 @@ fn parse_output_group(group: &str) -> Vec<String> {
         .filter(|part| !part.is_empty())
         .map(ToOwned::to_owned)
         .collect()
+}
+
+fn parse_source_location(
+    source_id: &str,
+    value: &str,
+    config_dir: &Path,
+) -> Result<SourceLocation, ConfigError> {
+    if value.trim().is_empty() {
+        return Err(ConfigError::InvalidUrl {
+            source_id: source_id.to_owned(),
+            url: value.to_owned(),
+        });
+    }
+
+    match Url::parse(value) {
+        Ok(url) => match url.scheme() {
+            "http" | "https" => Ok(SourceLocation::Http(url)),
+            "file" => {
+                let canonical = value
+                    .split_once("://")
+                    .is_some_and(|(scheme, _)| scheme.eq_ignore_ascii_case("file"));
+                if !canonical {
+                    return Err(ConfigError::InvalidFileUrl {
+                        source_id: source_id.to_owned(),
+                        url: value.to_owned(),
+                    });
+                }
+                url.to_file_path().map(SourceLocation::File).map_err(|()| {
+                    ConfigError::InvalidFileUrl {
+                        source_id: source_id.to_owned(),
+                        url: value.to_owned(),
+                    }
+                })
+            }
+            scheme => Err(ConfigError::UnsupportedScheme {
+                source_id: source_id.to_owned(),
+                scheme: scheme.to_owned(),
+            }),
+        },
+        Err(url::ParseError::RelativeUrlWithoutBase) => {
+            Ok(SourceLocation::File(config_dir.join(value)))
+        }
+        Err(_) => Err(ConfigError::InvalidUrl {
+            source_id: source_id.to_owned(),
+            url: value.to_owned(),
+        }),
+    }
 }
 
 fn is_valid_source_id(id: &str) -> bool {
@@ -422,6 +465,131 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, ConfigError::UnsupportedScheme { .. }));
+    }
+
+    #[test]
+    fn accepts_file_url_source() {
+        let cfg = parse(
+            r#"
+            [sources]
+            a = "file:///srv/blocklists/hosts.txt"
+
+            [outputs]
+            a = "/tmp/a.cdb"
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            cfg.sources["a"].location,
+            SourceLocation::File(PathBuf::from("/srv/blocklists/hosts.txt"))
+        );
+    }
+
+    #[test]
+    fn decodes_percent_encoded_file_url_path() {
+        let cfg = parse(
+            r#"
+            [sources]
+            a = "file:///srv/block%20lists/hosts%20file.txt"
+
+            [outputs]
+            a = "/tmp/a.cdb"
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            cfg.sources["a"].location,
+            SourceLocation::File(PathBuf::from("/srv/block lists/hosts file.txt"))
+        );
+    }
+
+    #[test]
+    fn accepts_absolute_path_source() {
+        let cfg = parse(
+            r#"
+            [sources]
+            a = "/srv/blocklists/hosts.txt"
+
+            [outputs]
+            a = "/tmp/a.cdb"
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            cfg.sources["a"].location,
+            SourceLocation::File(PathBuf::from("/srv/blocklists/hosts.txt"))
+        );
+    }
+
+    #[test]
+    fn resolves_relative_path_against_config_directory() {
+        let cfg = Config::from_toml_str(
+            r#"
+            [sources]
+            a = "lists/hosts.txt"
+
+            [outputs]
+            a = "/tmp/a.cdb"
+            "#,
+            Path::new("/etc/cdbgen/config.toml"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            cfg.sources["a"].location,
+            SourceLocation::File(PathBuf::from("/etc/cdbgen/lists/hosts.txt"))
+        );
+    }
+
+    #[test]
+    fn rejects_file_url_with_remote_host() {
+        let err = parse(
+            r#"
+            [sources]
+            a = "file://example.com/hosts.txt"
+
+            [outputs]
+            a = "/tmp/a.cdb"
+            "#,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, ConfigError::InvalidFileUrl { .. }));
+    }
+
+    #[test]
+    fn rejects_non_canonical_file_url() {
+        let err = parse(
+            r#"
+            [sources]
+            a = "file:relative.txt"
+
+            [outputs]
+            a = "/tmp/a.cdb"
+            "#,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, ConfigError::InvalidFileUrl { .. }));
+    }
+
+    #[test]
+    fn rejects_empty_source_value() {
+        let err = parse(
+            r#"
+            [sources]
+            a = "   "
+
+            [outputs]
+            a = "/tmp/a.cdb"
+            "#,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, ConfigError::InvalidUrl { .. }));
     }
 
     #[test]

@@ -45,6 +45,12 @@ pub enum ConfigError {
     #[error("invalid URL for source {source_id}: {url}")]
     InvalidUrl { source_id: String, url: String },
 
+    #[error(
+        "invalid file URL for source {source_id}: {url} \
+         (expected file:///absolute/path or a filesystem path)"
+    )]
+    InvalidFileUrl { source_id: String, url: String },
+
     #[error("unsupported URL scheme for source {source_id}: {scheme}")]
     UnsupportedScheme { source_id: String, scheme: String },
 
@@ -68,6 +74,13 @@ pub enum FetchError {
 
     #[error("cache error for source {source_id}: {message}")]
     Cache { source_id: String, message: String },
+
+    #[error("failed to read source file for {source_id} at {path}: {message}")]
+    FileRead {
+        source_id: String,
+        path: PathBuf,
+        message: String,
+    },
 }
 
 #[derive(Debug, Error)]
