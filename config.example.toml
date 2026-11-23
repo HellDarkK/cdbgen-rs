@@ -29,6 +29,12 @@ unbound_example = "https://example.com/blocklists/unbound.conf"
 # RPZ CNAME . source.
 rpz_example = "https://example.com/blocklists/rpz.txt"
 
+# Local files are also supported. Values that are not http(s):// or
+# file:// URLs are treated as filesystem paths. Relative paths resolve
+# against this config file's directory.
+# local_example = "/etc/cdbgen/lists/local.txt"
+# file_url_example = "file:///etc/cdbgen/lists/filter.txt"
+
 [outputs]
 
 # Single output path.

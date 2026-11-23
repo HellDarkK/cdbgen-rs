@@ -2,7 +2,7 @@
 name = "cdbgen-rs"
 version = "0.1.3"
 edition = "2024"
-description = "Generate DJB-compatible CDB files from remote blocklists"
+description = "Generate DJB-compatible CDB files from blocklists"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 

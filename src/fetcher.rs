@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    path::Path,
     sync::Arc,
     time::Duration,
 };
@@ -10,10 +11,11 @@ use reqwest::{
 };
 use tokio::sync::Semaphore;
 use tracing::{debug, info, warn};
+use url::Url;
 
 use crate::{
     cache::{Cache, CacheMetadata, CachedSource},
-    config::{Config, SourceConfig},
+    config::{Config, SourceConfig, SourceLocation},
     error::FetchError,
 };
 
@@ -111,36 +113,52 @@ async fn fetch_one(
     force_refresh: bool,
     dry_run: bool,
 ) -> Result<FetchedSource, FetchError> {
-    let url = source.url.as_str();
+    match &source.location {
+        SourceLocation::Http(url) => {
+            fetch_http(client, &source.id, url, cache, force_refresh, dry_run).await
+        }
+        SourceLocation::File(path) => fetch_file(&source.id, path).await,
+    }
+}
+
+async fn fetch_http(
+    client: &Client,
+    source_id: &str,
+    url: &Url,
+    cache: &Cache,
+    force_refresh: bool,
+    dry_run: bool,
+) -> Result<FetchedSource, FetchError> {
+    let url_str = url.as_str();
     let cached = if force_refresh {
         None
     } else {
-        cache.load(&source.id, url)
+        cache.load(source_id, url_str)
     };
 
     if force_refresh {
-        debug!(source = %source.id, "force-refresh bypasses cache validators");
+        debug!(source = %source_id, "force-refresh bypasses cache validators");
     }
 
     let mut last_error = None;
     for attempt in 1..=MAX_ATTEMPTS {
         info!(
-            source = %source.id,
+            source = %source_id,
             url = %url,
             attempt,
             "fetch start"
         );
 
-        match attempt_fetch(client, source, cached.as_ref(), force_refresh).await {
+        match attempt_fetch(client, url, cached.as_ref(), force_refresh).await {
             Ok(FetchResult::Fresh { body, metadata }) => {
                 info!(
-                    source = %source.id,
+                    source = %source_id,
                     bytes = body.len(),
                     "fetch success"
                 );
-                if !dry_run && let Err(err) = cache.store(&source.id, &metadata, &body) {
+                if !dry_run && let Err(err) = cache.store(source_id, &metadata, &body) {
                     warn!(
-                        source = %source.id,
+                        source = %source_id,
                         cache = %cache.root().display(),
                         error = %err,
                         "failed to update cache"
@@ -154,7 +172,7 @@ async fn fetch_one(
             }
             Ok(FetchResult::NotModified) => {
                 if let Some(cached) = cached {
-                    info!(source = %source.id, "fetch not modified; using cache");
+                    info!(source = %source_id, "fetch not modified; using cache");
                     return Ok(FetchedSource {
                         body: cached.body,
                         from_cache: true,
@@ -165,7 +183,7 @@ async fn fetch_one(
             }
             Err(err) => {
                 warn!(
-                    source = %source.id,
+                    source = %source_id,
                     attempt,
                     error = %err,
                     "fetch attempt failed"
@@ -180,7 +198,7 @@ async fn fetch_one(
     }
 
     if !force_refresh && let Some(cached) = cached {
-        warn!(source = %source.id, "fetch failed; using stale cache");
+        warn!(source = %source_id, "fetch failed; using stale cache");
         return Ok(FetchedSource {
             body: cached.body,
             from_cache: true,
@@ -189,8 +207,25 @@ async fn fetch_one(
     }
 
     Err(FetchError::Unavailable {
-        source_id: source.id.clone(),
+        source_id: source_id.to_owned(),
         message: last_error.unwrap_or_else(|| "unknown fetch error".to_string()),
+    })
+}
+
+async fn fetch_file(source_id: &str, path: &Path) -> Result<FetchedSource, FetchError> {
+    info!(source = %source_id, path = %path.display(), "read local source start");
+    let body = tokio::fs::read(path)
+        .await
+        .map_err(|err| FetchError::FileRead {
+            source_id: source_id.to_owned(),
+            path: path.to_path_buf(),
+            message: err.to_string(),
+        })?;
+    info!(source = %source_id, bytes = body.len(), "read local source success");
+    Ok(FetchedSource {
+        body,
+        from_cache: false,
+        stale: false,
     })
 }
 
@@ -204,11 +239,11 @@ enum FetchResult {
 
 async fn attempt_fetch(
     client: &Client,
-    source: &SourceConfig,
+    url: &Url,
     cached: Option<&CachedSource>,
     force_refresh: bool,
 ) -> Result<FetchResult, String> {
-    let mut request = client.get(source.url.clone());
+    let mut request = client.get(url.clone());
 
     if !force_refresh && let Some(cached) = cached {
         if let Some(etag) = &cached.metadata.etag {
@@ -237,7 +272,7 @@ async fn attempt_fetch(
 
     Ok(FetchResult::Fresh {
         metadata: CacheMetadata {
-            url: source.url.to_string(),
+            url: url.to_string(),
             etag,
             last_modified,
         },
@@ -449,6 +484,71 @@ mod tests {
                 }
                 FetchOutcome::Unavailable { error } => panic!("{encoding}: {error}"),
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn reads_local_file_source_without_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let list = dir.path().join("list.txt");
+        std::fs::write(&list, "local.example\n").unwrap();
+
+        let config = Config::from_toml_str(
+            &format!(
+                r#"
+                [sources]
+                a = "file://{}"
+                [outputs]
+                a = "/tmp/a.cdb"
+                "#,
+                list.display()
+            ),
+            Path::new("test.toml"),
+        )
+        .unwrap();
+        let cache = Cache::new(dir.path().join("cache"));
+
+        let result =
+            fetch_sources(&config, &config.selected_source_ids(), &cache, false, false).await;
+        match &result["a"] {
+            FetchOutcome::Available(source) => {
+                assert_eq!(source.body, b"local.example\n");
+                assert!(!source.from_cache);
+                assert!(!source.stale);
+            }
+            FetchOutcome::Unavailable { error } => panic!("{error}"),
+        }
+
+        assert!(!cache.root().join("a.body").exists());
+    }
+
+    #[tokio::test]
+    async fn reports_missing_local_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing.txt");
+
+        let config = Config::from_toml_str(
+            &format!(
+                r#"
+                [sources]
+                a = "{}"
+                [outputs]
+                a = "/tmp/a.cdb"
+                "#,
+                missing.display()
+            ),
+            Path::new("test.toml"),
+        )
+        .unwrap();
+        let cache = Cache::new(dir.path().join("cache"));
+
+        let result =
+            fetch_sources(&config, &config.selected_source_ids(), &cache, false, false).await;
+        match &result["a"] {
+            FetchOutcome::Unavailable { error } => {
+                assert!(matches!(error, crate::error::FetchError::FileRead { .. }));
+            }
+            FetchOutcome::Available(_) => panic!("expected missing file to fail"),
         }
     }
 
