@@ -105,6 +105,109 @@ async fn normal_run_writes_wire_format_keys_by_default() {
 }
 
 #[test]
+fn file_source_with_relative_path_builds_cdb() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("list.txt"), "relative.example\n").unwrap();
+    let output = dir.path().join("out.cdb");
+    let config = dir.path().join("config.toml");
+    fs::write(
+        &config,
+        format!(
+            r#"
+            [sources]
+            a = "list.txt"
+            [outputs]
+            a = "{}"
+            "#,
+            output.display()
+        ),
+    )
+    .unwrap();
+
+    Command::cargo_bin("cdbgen-rs")
+        .unwrap()
+        .arg("--config")
+        .arg(config)
+        .assert()
+        .success();
+
+    let db = cdb::CDB::open(&output).unwrap();
+    assert_eq!(
+        db.get(&domain_to_wire("relative.example").unwrap())
+            .unwrap()
+            .unwrap(),
+        b""
+    );
+}
+
+#[test]
+fn missing_file_source_exits_3_and_skips_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("out.cdb");
+    let config = dir.path().join("config.toml");
+    fs::write(
+        &config,
+        format!(
+            r#"
+            [sources]
+            a = "missing.txt"
+            [outputs]
+            a = "{}"
+            "#,
+            output.display()
+        ),
+    )
+    .unwrap();
+
+    Command::cargo_bin("cdbgen-rs")
+        .unwrap()
+        .arg("--config")
+        .arg(config)
+        .assert()
+        .failure()
+        .code(3)
+        .stderr(predicate::str::contains("failed to read source file"));
+
+    assert!(!output.exists());
+}
+
+#[test]
+fn missing_file_source_does_not_block_independent_output() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("good.txt"), "good.example\n").unwrap();
+    let good = dir.path().join("good.cdb");
+    let bad = dir.path().join("bad.cdb");
+    let config = dir.path().join("config.toml");
+    fs::write(
+        &config,
+        format!(
+            r#"
+            [sources]
+            good = "good.txt"
+            missing = "missing.txt"
+            [outputs]
+            good = "{}"
+            missing = "{}"
+            "#,
+            good.display(),
+            bad.display()
+        ),
+    )
+    .unwrap();
+
+    Command::cargo_bin("cdbgen-rs")
+        .unwrap()
+        .arg("--config")
+        .arg(config)
+        .assert()
+        .failure()
+        .code(3);
+
+    assert!(good.exists());
+    assert!(!bad.exists());
+}
+
+#[test]
 fn output_flag_is_deferred() {
     Command::cargo_bin("cdbgen-rs")
         .unwrap()
